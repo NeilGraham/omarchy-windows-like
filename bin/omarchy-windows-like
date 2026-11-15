@@ -1,0 +1,183 @@
+#!/bin/bash
+# omarchy-windows-like: set up, rebuild, check or remove the Windows-like
+# experience on Omarchy.
+set -euo pipefail
+
+usage() {
+  cat <<'USAGE'
+Usage: omarchy-windows-like <command>
+
+  setup      Build the drag-events plugin, hook it into Hyprland, make floating
+             the default layout, and rebuild automatically after `omarchy update`
+  build      Rebuild the drag-events plugin for the running Hyprland and reload it
+  status     Show what is installed
+  uninstall  Undo everything setup did (the default layout is left as it is)
+USAGE
+}
+
+REPO=$(cd -- "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")/.." && pwd)
+LIB_DIR="$HOME/.local/lib/omarchy-windows-like"
+LIB="$LIB_DIR/drag-events.so"
+STAMP="$LIB_DIR/built-for"
+HYPR_DIR="$HOME/.config/hypr"
+HYPR_MAIN="$HYPR_DIR/hyprland.lua"
+HYPR_STUB="$HYPR_DIR/windows-like.lua"
+REQUIRE_LINE='require("hypr.windows-like")'
+HOOK_NAME="omarchy-windows-like-rebuild"
+HOOK_FILE="$HOME/.config/omarchy/hooks/post-update.d/$HOOK_NAME"
+BIN_LINK="$HOME/.local/bin/omarchy-windows-like"
+
+say() { printf '%s\n' "$*"; }
+fail() { printf 'omarchy-windows-like: %s\n' "$*" >&2; exit 1; }
+
+hyprland_version() {
+  hyprctl version -j 2>/dev/null | jq -r '.tag // empty' 2>/dev/null || true
+}
+
+headers_version() {
+  pkg-config --modversion hyprland 2>/dev/null || true
+}
+
+build() {
+  local missing=()
+  for tool in g++ make pkg-config jq; do
+    command -v "$tool" >/dev/null || missing+=("$tool")
+  done
+  pkg-config --exists hyprland 2>/dev/null || missing+=("hyprland headers")
+  (( ${#missing[@]} == 0 )) || fail "missing: ${missing[*]} (on Arch: omarchy pkg add base-devel)"
+
+  local work
+  work=$(mktemp -d -t owl-build-XXXXXX)
+  cp "$REPO/native/drag-events/main.cpp" "$REPO/native/drag-events/Makefile" "$work/"
+  say "Building drag-events for Hyprland $(headers_version)..."
+  if ! make -C "$work" >"$work/build.log" 2>&1; then
+    cat "$work/build.log" >&2
+    rm -rf "$work"
+    fail "build failed"
+  fi
+  mkdir -p "$LIB_DIR"
+  # Replace rather than overwrite, so a running Hyprland keeps its loaded copy.
+  install -m 755 "$work/drag-events.so" "$LIB.new"
+  mv -f "$LIB.new" "$LIB"
+  rm -rf "$work"
+  headers_version >"$STAMP"
+  say "Installed $LIB"
+}
+
+reload_plugin() {
+  command -v hyprctl >/dev/null && hyprctl version >/dev/null 2>&1 || return 0
+  # The running Hyprland only matches freshly built headers when it is the
+  # same version; after an update the new build loads at the next login.
+  if [[ $(hyprland_version) != "v$(headers_version)" ]]; then
+    say "Hyprland was updated but is still running the old version; log out and back in to finish."
+    return 0
+  fi
+  hyprctl plugin unload "$LIB" >/dev/null 2>&1 || true
+  hyprctl plugin load "$LIB" >/dev/null
+}
+
+write_stub() {
+  mkdir -p "$HYPR_DIR"
+  cat >"$HYPR_STUB" <<LUA
+-- Added by omarchy-windows-like setup; remove with: omarchy-windows-like uninstall
+local module = "$REPO/hypr/windows-like.lua"
+local file = io.open(module, "r")
+if file then
+  file:close()
+  dofile(module)
+end
+LUA
+}
+
+add_require() {
+  [[ -f $HYPR_MAIN ]] || fail "$HYPR_MAIN not found; is this Omarchy 4?"
+  grep -qxF "$REQUIRE_LINE" "$HYPR_MAIN" && return 0
+  cp "$HYPR_MAIN" "$HYPR_MAIN.bak.$(date +%s)"
+  printf '\n-- Windows-like snapping and shortcuts (omarchy-windows-like).\n%s\n' "$REQUIRE_LINE" >>"$HYPR_MAIN"
+}
+
+remove_require() {
+  [[ -f $HYPR_MAIN ]] || return 0
+  grep -qxF "$REQUIRE_LINE" "$HYPR_MAIN" || return 0
+  cp "$HYPR_MAIN" "$HYPR_MAIN.bak.$(date +%s)"
+  local tmp
+  tmp=$(mktemp)
+  grep -vxF -e "$REQUIRE_LINE" -e '-- Windows-like snapping and shortcuts (omarchy-windows-like).' "$HYPR_MAIN" >"$tmp" || true
+  cat "$tmp" >"$HYPR_MAIN"
+  rm -f "$tmp"
+}
+
+install_hook() {
+  local script
+  script=$(mktemp)
+  cat >"$script" <<HOOK
+#!/bin/bash
+# Rebuild omarchy-windows-like's drag-events plugin when Hyprland was updated.
+if [[ -x "$REPO/bin/omarchy-windows-like" && "\$(cat "$STAMP" 2>/dev/null)" != "\$(pkg-config --modversion hyprland 2>/dev/null)" ]]; then
+  "$REPO/bin/omarchy-windows-like" build || echo "omarchy-windows-like: rebuild failed; run: omarchy-windows-like build" >&2
+fi
+HOOK
+  mkdir -p "$(dirname "$HOOK_FILE")"
+  install -m 755 "$script" "$HOOK_FILE"
+  rm -f "$script"
+}
+
+validate_hyprland() {
+  command -v hyprctl >/dev/null && hyprctl version >/dev/null 2>&1 || return 0
+  hyprctl reload >/dev/null
+  sleep 0.5
+  local errors
+  errors=$(hyprctl configerrors 2>/dev/null | grep -v '^\s*$' || true)
+  [[ -z $errors ]] || { printf '%s\n' "$errors" >&2; fail "Hyprland reports config errors (see above)"; }
+}
+
+cmd_setup() {
+  build
+  write_stub
+  add_require
+  install_hook
+  mkdir -p "$(dirname "$BIN_LINK")"
+  ln -sfn "$REPO/bin/omarchy-windows-like" "$BIN_LINK"
+  if command -v omarchy >/dev/null && [[ $(omarchy hyprland workspace layout default 2>/dev/null) != floating ]]; then
+    omarchy hyprland workspace layout default floating >/dev/null
+    say "Floating is now the default workspace layout (Super + L still switches one workspace)."
+  fi
+  validate_hyprland
+  reload_plugin
+  say "Done. Drag a window by its title bar to an edge, a corner, or the top of the screen."
+}
+
+cmd_build() {
+  build
+  reload_plugin
+}
+
+cmd_status() {
+  say "repo:        $REPO"
+  say "plugin:      $([[ -f $LIB ]] && echo "$LIB (built for Hyprland $(cat "$STAMP" 2>/dev/null))" || echo "not built")"
+  say "running:     Hyprland $(hyprland_version), drag-events $(hyprctl plugin list -j 2>/dev/null | jq -r 'if any(.[]?; .name == "windows-like-drag-events") then "loaded" else "not loaded" end' 2>/dev/null || echo unknown)"
+  say "hyprland.lua: $(grep -qxF "$REQUIRE_LINE" "$HYPR_MAIN" 2>/dev/null && echo "requires hypr.windows-like" || echo "not hooked up")"
+  say "update hook: $([[ -x $HOOK_FILE ]] && echo installed || echo "not installed")"
+  say "default layout: $(omarchy hyprland workspace layout default 2>/dev/null || echo unknown)"
+}
+
+cmd_uninstall() {
+  remove_require
+  rm -f "$HYPR_STUB" "$HOOK_FILE"
+  [[ -L $BIN_LINK ]] && rm -f "$BIN_LINK"
+  if command -v hyprctl >/dev/null && hyprctl version >/dev/null 2>&1; then
+    hyprctl plugin unload "$LIB" >/dev/null 2>&1 || true
+    hyprctl reload >/dev/null
+  fi
+  rm -rf "$LIB_DIR"
+  say "Removed. The shell plugin itself stays until: omarchy plugin remove io.github.neilgraham.windows-like"
+}
+
+case ${1:-} in
+  setup) cmd_setup ;;
+  build) cmd_build ;;
+  status) cmd_status ;;
+  uninstall) cmd_uninstall ;;
+  -h | --help | help) usage ;;
+  *) usage >&2; exit 2 ;;
+esac

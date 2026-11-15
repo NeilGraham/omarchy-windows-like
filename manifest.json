@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.neilgraham.windows-like",
+  "name": "Windows-like",
+  "version": "0.1.0",
+  "author": "Neil Graham",
+  "license": "MIT",
+  "description": "Makes Omarchy's floating mode feel like Windows: drag windows to edges and corners to snap them, to the top to maximize or pick a layout, and stretch them to full height by their top or bottom border.",
+  "homepage": "https://github.com/NeilGraham/omarchy-windows-like",
+  "repository": "https://github.com/NeilGraham/omarchy-windows-like",
+  "keywords": [
+    "windows",
+    "snap",
+    "layouts",
+    "floating",
+    "hyprland"
+  ],
+  "kinds": [
+    "overlay"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "overlay": "WindowsLike.qml"
+  }
+}
