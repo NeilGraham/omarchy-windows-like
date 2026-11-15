@@ -26,6 +26,11 @@ size it had before.
 **Full-height stretch:** drag a window's top or bottom border to the edge of
 the screen and it stretches from top to bottom, keeping its width.
 
+**Resizing like Windows:** dragging a window's side resizes it in that
+direction only (Hyprland on its own always resizes from the nearest corner),
+corners resize both ways, and the top edge above the title bar shows a resize
+cursor and resizes the top, just like the other three sides.
+
 **Super + Z** opens the layout picker for the focused window, like Win + Z.
 
 **Floating by default:** setup makes floating the default layout. Super + L
@@ -69,12 +74,14 @@ Both are saved in `~/.config/omarchy/shell.json`.
 
 Two parts, each kept as small as possible:
 
-- **`native/drag-events/`** — a ~100 line Hyprland plugin. Hyprland has no
+- **`native/drag-events/`** — a small Hyprland plugin. Hyprland has no
   event for "a window is being dragged", and Omarchy's title bars swallow the
   mouse button, so nothing outside the compositor can see a title-bar drag.
   The plugin watches Hyprland's drag controller (it hooks nothing and changes
   no input) and reports `start` / `move` / `end` with the pointer and window
-  position as `custom` IPC events.
+  position as `custom` IPC events. It also restarts border resizes on the
+  side that was pressed and sets the border cursor from the whole window,
+  title bar included; it never cancels or redirects a click.
 - **`WindowsLike.qml`** — an Omarchy shell plugin (Quickshell) that listens for
   those events, draws the preview and the layout picker, and places windows
   with `hyprctl eval`. Gaps, border size and title bar height are read from
@@ -91,6 +98,7 @@ virtual pointer, and never touch your session:
 make -C native/drag-events
 python -I tests/test_drag_events.py native/drag-events/drag-events.so
 python -I tests/test_snapping.py native/drag-events/drag-events.so
+python -I tests/test_edges.py native/drag-events/drag-events.so
 ```
 
 `test_snapping.py` runs `WindowsLike.qml` in its own Quickshell with stand-ins
