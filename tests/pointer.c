@@ -42,7 +42,16 @@ int main(int argc, char **argv) {
       zwlr_virtual_pointer_v1_button(pointer, now, 272, WL_POINTER_BUTTON_STATE_PRESSED);
     else if (!strcmp(command, "up"))
       zwlr_virtual_pointer_v1_button(pointer, now, 272, WL_POINTER_BUTTON_STATE_RELEASED);
-    else if (!strcmp(command, "wait"))
+    else if (!strcmp(command, "mdown"))
+      zwlr_virtual_pointer_v1_button(pointer, now, 274, WL_POINTER_BUTTON_STATE_PRESSED);
+    else if (!strcmp(command, "mup"))
+      zwlr_virtual_pointer_v1_button(pointer, now, 274, WL_POINTER_BUTTON_STATE_RELEASED);
+    else if (!strcmp(command, "hscroll") || !strcmp(command, "vscroll")) {
+      // Smooth (touchpad-like) scrolling by x pixels.
+      const uint32_t axis = command[0] == 'h' ? WL_POINTER_AXIS_HORIZONTAL_SCROLL : WL_POINTER_AXIS_VERTICAL_SCROLL;
+      zwlr_virtual_pointer_v1_axis_source(pointer, WL_POINTER_AXIS_SOURCE_FINGER);
+      zwlr_virtual_pointer_v1_axis(pointer, now, axis, wl_fixed_from_int(x));
+    } else if (!strcmp(command, "wait"))
       usleep(x * 1000);
     zwlr_virtual_pointer_v1_frame(pointer);
     wl_display_roundtrip(display);

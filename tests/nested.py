@@ -36,7 +36,9 @@ end
 
 
 class Nested:
-  def __init__(self, artifacts: Path):
+  def __init__(self, artifacts: Path, extra_config: str = '', extra_env: dict | None = None):
+    self.extra_config = extra_config
+    self.extra_env = extra_env or {}
     self.artifacts = artifacts
     artifacts.mkdir(parents=True, exist_ok=True)
     self._tmp = tempfile.TemporaryDirectory(prefix='owl-')
@@ -51,8 +53,12 @@ class Nested:
       subprocess.run(['wayland-scanner', kind, str(HERE / 'wlr-virtual-pointer-unstable-v1.xml'), str(self.scratch / target)], check=True)
     subprocess.run(['cc', str(HERE / 'pointer.c'), str(self.scratch / 'pointer-protocol.c'), '-I', str(self.scratch),
                     '-lwayland-client', '-o', str(self.scratch / 'pointer')], check=True)
+    for kind, target in [('client-header', 'keyboard-protocol.h'), ('private-code', 'keyboard-protocol.c')]:
+      subprocess.run(['wayland-scanner', kind, str(HERE / 'virtual-keyboard-unstable-v1.xml'), str(self.scratch / target)], check=True)
+    subprocess.run(['cc', str(HERE / 'keyboard.c'), str(self.scratch / 'keyboard-protocol.c'), '-I', str(self.scratch),
+                    '-lwayland-client', '-lxkbcommon', '-o', str(self.scratch / 'keyboard')], check=True)
     config = self.scratch / 'hyprland.lua'
-    config.write_text(CONFIG)
+    config.write_text(CONFIG + self.extra_config)
 
     parents = json.loads(subprocess.check_output(['hyprctl', 'instances', '-j'], text=True))
     if len(parents) != 1:
@@ -60,7 +66,7 @@ class Nested:
     self.parent_signature = parents[0]['instance']
     parent_display = str(Path(os.environ['XDG_RUNTIME_DIR']) / parents[0]['wl_socket'])
     self.env = dict(os.environ, XDG_RUNTIME_DIR=str(self.scratch), AQ_BACKEND='wayland', WAYLAND_DISPLAY=parent_display,
-                    HYPRLAND_NO_SD_NOTIFY='1', HYPRLAND_NO_SD_VARS='1')
+                    HYPRLAND_NO_SD_NOTIFY='1', HYPRLAND_NO_SD_VARS='1', **self.extra_env)
     self.env.pop('HYPRLAND_INSTANCE_SIGNATURE', None)
     self.log = (self.artifacts / 'compositor.log').open('w')
     self.compositor = subprocess.Popen(['Hyprland', '--config', str(config)], env=self.env, stdout=self.log, stderr=self.log)
@@ -84,8 +90,22 @@ class Nested:
     return self
 
   def __exit__(self, *exc):
+    # Close every window and let it unmap before stopping the compositor:
+    # tearing Hyprland down with windows (and groups) still mapped can crash it.
     for c in self._clients:
-      c.kill()
+      c.terminate()
+    for c in self._clients:
+      try:
+        c.wait(timeout=3)
+      except subprocess.TimeoutExpired:
+        c.kill()
+    for _ in range(30):
+      try:
+        if not self.clients():
+          break
+      except (subprocess.SubprocessError, ValueError):
+        break
+      time.sleep(.1)
     self.compositor.terminate()
     try:
       self.compositor.wait(timeout=5)
@@ -113,15 +133,23 @@ class Nested:
     self.ctl('plugin', 'load', str(path))
     time.sleep(.2)
 
-  def open_window(self, title='owl test'):
-    before = len(self.clients())
-    proc = subprocess.Popen(['foot', '-o', 'resize-by-cells=no', '--app-id=owl-test', f'--title={title}', 'sleep', '120'], env=self.env,
-                            stdout=self.log, stderr=self.log)
+  def open_window(self, title='owl test', app_id='owl-test', cwd=None, command=('sleep', '120')):
+    """Opens a foot window; command=None runs the user's shell."""
+    before = {c['address'] for c in self.clients()}
+    argv = ['foot', '-o', 'resize-by-cells=no', f'--app-id={app_id}']
+    if title:
+      argv.append(f'--title={title}')
+    if cwd:
+      argv.append(f'--working-directory={cwd}')
+    if command:
+      argv += list(command)
+    proc = subprocess.Popen(argv, env=self.env, stdout=self.log, stderr=self.log)
     self._clients.append(proc)
     for _ in range(60):
-      if len(self.clients()) > before:
-        time.sleep(.2)
-        return self.clients()[-1]
+      new = [c for c in self.clients() if c['address'] not in before]
+      if new:
+        time.sleep(.3)
+        return self.client(new[0]['address'])
       time.sleep(.1)
     raise RuntimeError('test window did not map')
 
@@ -154,8 +182,24 @@ class Nested:
   def client(self, address):
     return next(c for c in self.clients() if c['address'] == address)
 
+  @property
+  def width(self):
+    return self.size()[0]
+
+  @property
+  def height(self):
+    return self.size()[1]
+
+  def size(self):
+    """The nested screen's logical size, read fresh: it depends on the window the
+    parent session gives the compositor and changes when a config reload
+    re-applies the monitor rule."""
+    monitor = json.loads(self.ctl('monitors', '-j'))[0]
+    return round(monitor['width'] / monitor['scale']), round(monitor['height'] / monitor['scale'])
+
   def pointer(self, commands):
-    subprocess.run([str(self.scratch / 'pointer'), str(WIDTH), str(HEIGHT)], input='\n'.join(commands) + '\n', text=True,
+    width, height = self.size()
+    subprocess.run([str(self.scratch / 'pointer'), str(width), str(height)], input='\n'.join(commands) + '\n', text=True,
                    env=self.env, check=True, timeout=20)
     time.sleep(.2)
 
@@ -169,6 +213,18 @@ class Nested:
       sx, sy = ex, ey
     commands += ['wait 100', 'up', 'wait 100']
     self.pointer(commands)
+
+  def shortcut(self, *keys):
+    """Holds each key but the last, taps the last: shortcut('Control_L', 'Shift_L', 'Tab')."""
+    *mods, last = keys
+    lines = [f'down {m}' for m in mods] + [f'tap {last}'] + [f'up {m}' for m in reversed(mods)]
+    subprocess.run([str(self.scratch / 'keyboard')], input='\n'.join(lines) + '\n', text=True, env=self.env, check=True, timeout=10)
+    time.sleep(.3)
+
+  def key(self, *args):
+    """Types with wtype, e.g. key('-M', 'ctrl', 't', '-m', 'ctrl') or key('ls\n')."""
+    subprocess.run(['wtype', *args], env=self.env, check=True, timeout=10)
+    time.sleep(.3)
 
   def capture(self, name):
     monitor = json.loads(self.ctl('monitors', '-j'))[0]['name']

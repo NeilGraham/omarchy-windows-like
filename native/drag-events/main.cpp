@@ -51,6 +51,8 @@
 
 #include <linux/input-event-codes.h>
 
+#include "tabs.hpp"
+
 #include <chrono>
 #include <format>
 
@@ -284,8 +286,9 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     throw std::runtime_error("[windows-like] version mismatch");
   }
 
-  static auto moveListener = Event::bus()->m_events.input.mouse.move.listen([](Vector2D, Event::SCallbackInfo &) {
+  static auto moveListener = Event::bus()->m_events.input.mouse.move.listen([](Vector2D pos, Event::SCallbackInfo &) {
     check(true);
+    Tabs::onMouseMove(pos);
     updateCursorSoon();
   });
   static auto buttonListener = Event::bus()->m_events.input.mouse.button.listen([](IPointer::SButtonEvent e, Event::SCallbackInfo &) {
@@ -293,10 +296,16 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     checkSoon();
   });
 
-  return {"windows-like-drag-events", "Reports window drags to the omarchy-windows-like shell plugin", "omarchy-windows-like", "0.1.0"};
+  Tabs::init(handle);
+  // The Lua side styles the tab bar through plugin:windows_like:*, which only
+  // exist from here on: read the config again so it finds them.
+  HyprlandAPI::reloadConfig();
+
+  return {"windows-like-drag-events", "omarchy-windows-like: drag events, side resizing and window tabs", "omarchy-windows-like", "0.1.0"};
 }
 
 APICALL EXPORT void PLUGIN_EXIT() {
+  Tabs::exit();
   if (g_cursorSet)
     Pointer::Cursor::overrideController->unsetOverride(Pointer::Cursor::CURSOR_OVERRIDE_WINDOW_EDGE);
   if (g_state.active)

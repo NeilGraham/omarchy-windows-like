@@ -9,13 +9,12 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-from nested import Nested, TITLEBARS, WIDTH, HEIGHT  # noqa: E402
+from nested import Nested, TITLEBARS  # noqa: E402
 
 plugin = Path(sys.argv[1]).resolve()
 artifacts = Path(sys.argv[2] if len(sys.argv) > 2 else '/tmp/owl-test-snapping')
 
 GAPS_OUT, GAPS_IN, BORDER, BAR = 10, 5, 2, 30
-AREA = (GAPS_OUT, GAPS_OUT, WIDTH - 2 * GAPS_OUT, HEIGHT - 2 * GAPS_OUT)
 
 
 def zone(fx, fy, fw, fh):
@@ -73,6 +72,8 @@ with Nested(artifacts) as n:
   addr = w['address']
   n.ctl('dispatch', f'hl.dsp.window.tag({{ tag = "+omarchy-floating-workspace", window = "address:{addr}" }})')
   n.start_shell(HERE.parent / 'WindowsLike.qml')
+  WIDTH, HEIGHT = n.size()
+  AREA = (GAPS_OUT, GAPS_OUT, WIDTH - 2 * GAPS_OUT, HEIGHT - 2 * GAPS_OUT)
   n.ipc('assist', 'off')
   state = n.ipc('state')
   assert state['hasTitleBars'] and state['barHeight'] == BAR and state['gapsOut'] == GAPS_OUT, state

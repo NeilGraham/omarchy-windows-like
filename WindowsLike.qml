@@ -66,6 +66,8 @@ Item {
     property int gapsIn: 5
     property int barHeight: 30
     property bool hasTitleBars: false
+    // The tab bar the native plugin draws under the title bar of a window with tabs.
+    property int tabBarHeight: 0
     readonly property int innerGap: 2 * gapsIn
     // Omarchy's title bars draw on windows with this tag only.
     readonly property string floatingTag: "omarchy-floating-workspace"
@@ -77,7 +79,7 @@ Item {
 
     Process {
         id: optionsProc
-        command: ["sh", "-c", "for o in general:border_size general:gaps_out general:gaps_in plugin:hyprbars:bar_height; do hyprctl getoption $o 2>/dev/null | head -1; printf '\\n@@OWL@@\\n'; done; hyprctl -j plugin list"]
+        command: ["sh", "-c", "for o in general:border_size general:gaps_out general:gaps_in plugin:hyprbars:bar_height plugin:windows_like:tab_height; do hyprctl getoption $o 2>/dev/null | head -1; printf '\\n@@OWL@@\\n'; done; hyprctl -j plugin list"]
         running: true
         stdout: StdioCollector {
             onStreamFinished: {
@@ -87,8 +89,9 @@ Item {
                 if (!isNaN(v[1])) root.gapsOut = v[1];
                 if (!isNaN(v[2])) root.gapsIn = v[2];
                 if (!isNaN(v[3])) root.barHeight = v[3];
+                root.tabBarHeight = isNaN(v[4]) ? 0 : v[4];
                 try {
-                    root.hasTitleBars = JSON.parse(s[4] || "[]").some(function(p) {
+                    root.hasTitleBars = JSON.parse(s[5] || "[]").some(function(p) {
                         return p.name === "hyprbars";
                     });
                 } catch (e) {
@@ -192,13 +195,18 @@ Item {
         return null;
     }
 
+    // Everything drawn above a window's content: Omarchy's title bar, and the
+    // tab bar when the window has tabs.
     function titleBarFor(client) {
-        if (!root.hasTitleBars || !client || !client.tags)
+        if (!client)
             return 0;
+        var height = client.grouped && client.grouped.length > 1 ? root.tabBarHeight : 0;
+        if (!root.hasTitleBars || !client.tags)
+            return height;
         for (var i = 0; i < client.tags.length; i++)
             if (String(client.tags[i]).replace(/\*$/, "") === root.floatingTag)
-                return root.barHeight;
-        return 0;
+                return height + root.barHeight;
+        return height;
     }
 
     function validAddress(a) {
@@ -810,6 +818,7 @@ Item {
                 gapsOut: root.gapsOut,
                 gapsIn: root.gapsIn,
                 barHeight: root.barHeight,
+                tabBarHeight: root.tabBarHeight,
                 hasTitleBars: root.hasTitleBars
             });
         }

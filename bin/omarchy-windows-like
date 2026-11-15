@@ -26,6 +26,10 @@ REQUIRE_LINE='require("hypr.windows-like")'
 HOOK_NAME="omarchy-windows-like-rebuild"
 HOOK_FILE="$HOME/.config/omarchy/hooks/post-update.d/$HOOK_NAME"
 BIN_LINK="$HOME/.local/bin/omarchy-windows-like"
+BASHRC="$HOME/.bashrc"
+# Ctrl + T opens a tab in foot, so fzf's file picker also gets Alt + T.
+FZF_LINE='declare -F fzf-file-widget >/dev/null && bind -m emacs-standard -x '"'"'"\et": fzf-file-widget'"'"' # omarchy-windows-like'
+FZF_COMMENT='# fzf file picker on Alt + T, since Ctrl + T opens a terminal tab (omarchy-windows-like)'
 
 say() { printf '%s\n' "$*"; }
 fail() { printf 'omarchy-windows-like: %s\n' "$*" >&2; exit 1; }
@@ -48,7 +52,7 @@ build() {
 
   local work
   work=$(mktemp -d -t owl-build-XXXXXX)
-  cp "$REPO/native/drag-events/main.cpp" "$REPO/native/drag-events/Makefile" "$work/"
+  cp "$REPO"/native/drag-events/*.cpp "$REPO"/native/drag-events/*.hpp "$REPO/native/drag-events/Makefile" "$work/"
   say "Building drag-events for Hyprland $(headers_version)..."
   if ! make -C "$work" >"$work/build.log" 2>&1; then
     cat "$work/build.log" >&2
@@ -107,6 +111,21 @@ remove_require() {
   rm -f "$tmp"
 }
 
+add_fzf_binding() {
+  [[ -f $BASHRC ]] || return 0
+  grep -qxF "$FZF_LINE" "$BASHRC" && return 0
+  printf '\n%s\n%s\n' "$FZF_COMMENT" "$FZF_LINE" >>"$BASHRC"
+}
+
+remove_fzf_binding() {
+  [[ -f $BASHRC ]] && grep -qxF "$FZF_LINE" "$BASHRC" || return 0
+  local tmp
+  tmp=$(mktemp)
+  grep -vxF -e "$FZF_LINE" -e "$FZF_COMMENT" "$BASHRC" >"$tmp" || true
+  cat "$tmp" >"$BASHRC"
+  rm -f "$tmp"
+}
+
 install_hook() {
   local script
   script=$(mktemp)
@@ -136,6 +155,7 @@ cmd_setup() {
   write_stub
   add_require
   install_hook
+  add_fzf_binding
   mkdir -p "$(dirname "$BIN_LINK")"
   ln -sfn "$REPO/bin/omarchy-windows-like" "$BIN_LINK"
   if command -v omarchy >/dev/null && [[ $(omarchy hyprland workspace layout default 2>/dev/null) != floating ]]; then
@@ -163,6 +183,7 @@ cmd_status() {
 
 cmd_uninstall() {
   remove_require
+  remove_fzf_binding
   rm -f "$HYPR_STUB" "$HOOK_FILE"
   [[ -L $BIN_LINK ]] && rm -f "$BIN_LINK"
   if command -v hyprctl >/dev/null && hyprctl version >/dev/null 2>&1; then

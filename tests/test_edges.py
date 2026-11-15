@@ -10,7 +10,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-from nested import Nested, TITLEBARS, WIDTH, HEIGHT  # noqa: E402
+from nested import Nested, TITLEBARS  # noqa: E402
 
 plugin = Path(sys.argv[1]).resolve()
 artifacts = Path(sys.argv[2] if len(sys.argv) > 2 else '/tmp/owl-test-edges')
@@ -21,7 +21,7 @@ DX, DY = 60, 45  # every drag moves diagonally, so a side that resizes both ways
 
 def reset(n, addr):
   n.ctl('dispatch', f'hl.dsp.window.resize({{ x = 600, y = 400, relative = false, window = "address:{addr}" }})')
-  n.ctl('dispatch', f'hl.dsp.window.move({{ x = 340, y = 220, window = "address:{addr}" }})')
+  n.ctl('dispatch', f'hl.dsp.window.move({{ x = 150, y = 180, window = "address:{addr}" }})')
   time.sleep(.3)
   return n.client(addr)
 
