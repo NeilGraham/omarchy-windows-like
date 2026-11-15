@@ -31,10 +31,14 @@
 #include <hyprland/src/config/values/types/ColorValue.hpp>
 #include <hyprland/src/config/values/types/IntValue.hpp>
 #include <hyprland/src/config/values/types/StringValue.hpp>
+#include <hyprland/src/desktop/state/FadingOutState.hpp>
 #include <hyprland/src/desktop/state/FocusState.hpp>
 #include <hyprland/src/desktop/state/WindowState.hpp>
 #include <hyprland/src/desktop/view/Group.hpp>
+#include <hyprland/src/layout/LayoutManager.hpp>
+#include <hyprland/src/layout/target/Target.hpp>
 #include <hyprland/src/desktop/view/Window.hpp>
+#include <hyprland/src/desktop/rule/windowRule/WindowRuleApplicator.hpp>
 #include <hyprland/src/event/EventBus.hpp>
 #include <hyprland/src/managers/XWaylandManager.hpp>
 #include <hyprland/src/managers/eventLoop/EventLoopManager.hpp>
@@ -263,6 +267,7 @@ std::vector<WP<CTabBar>> g_bars;
 Vector2D g_pointer{-1, -1};
 // Per group: how far the bar is scrolled, and which tab was last current.
 struct SGroupState {
+  std::optional<bool> barShown;
   double scroll = 0;
   size_t lastCurrent = SIZE_MAX, lastN = 0;
   double lastTabW = 0, lastAreaW = 0;
@@ -420,6 +425,15 @@ public:
     if (!m_lastVisible.has_value() || *m_lastVisible != VIS) {
       m_lastVisible = VIS;
       g_pDecorationPositioner->repositionDeco(this);
+    }
+    if (const auto w = m_window.lock(); w && w->m_group) {
+      // The bar showing or going: keep the window's frame where it is, and
+      // give the bar's room from (or back to) the content, like a Mac.
+      auto &gs = g_groups[w->m_group.get()];
+      if (gs.barShown.value_or(false) != VIS) {
+        gs.barShown = VIS;
+        keepFrame(w, VIS);
+      }
     }
     if (!VIS)
       return;
@@ -593,7 +607,102 @@ public:
   }
 
   static bool newTab(PHLWINDOW w);
+  static void keepFrame(PHLWINDOW w, bool barShown);
 };
+
+// ---------- No animations for tabs ----------
+//
+// Opening or closing a tab is a window mapping or unmapping, and the tab bar
+// appearing or going changes the window's size: all of which Hyprland would
+// animate. Switching tabs doesn't animate, so neither should these. A window
+// joining or leaving a tab group gets the no_anim property while it does (so
+// it neither pops in nor fades out), and for a few frames afterwards any move,
+// resize or fade on the group's windows is finished at once.
+
+struct SQuiet {
+  PHLWINDOWREF window;
+  bool setNoAnim = false;
+};
+std::vector<SQuiet> g_quiet;
+std::chrono::steady_clock::time_point g_quietUntil;
+SP<CEventLoopTimer> g_quietTimer;
+
+void finishAnimations(PHLWINDOW w) {
+  w->positionAnimation()->warp();
+  w->sizeAnimation()->warp();
+  for (int i = 0; i < Desktop::View::WINDOW_ALPHA_LAST; ++i)
+    w->alpha(static_cast<Desktop::View::eWindowAlpha>(i))->warp();
+}
+
+void quiet(PHLWINDOW w, bool noAnim) {
+  if (!w)
+    return;
+  if (noAnim && !w->m_ruleApplicator->noAnim().valueOrDefault()) {
+    w->m_ruleApplicator->noAnim().set(true, Desktop::Types::PRIORITY_SET_PROP);
+    g_quiet.push_back({w, true});
+  } else
+    g_quiet.push_back({w, false});
+  g_quietUntil = std::chrono::steady_clock::now() + std::chrono::milliseconds(250);
+  if (g_quietTimer)
+    g_quietTimer->updateTimeout(std::chrono::milliseconds(1));
+}
+
+void quietGroupOf(PHLWINDOW w, bool noAnim) {
+  if (!w)
+    return;
+  quiet(w, noAnim);
+  if (w->m_group)
+    for (const auto &ref : w->m_group->windows())
+      if (const auto m = ref.lock(); m && m != w)
+        quiet(m, false);
+}
+
+void onQuietTick() {
+  // Members of groups the quiet windows belong to now, as well as the windows.
+  for (const auto &q : g_quiet) {
+    const auto w = q.window.lock();
+    if (!w)
+      continue;
+    finishAnimations(w);
+    if (w->m_group)
+      for (const auto &ref : w->m_group->windows())
+        if (const auto m = ref.lock())
+          finishAnimations(m);
+  }
+  if (std::chrono::steady_clock::now() < g_quietUntil) {
+    g_quietTimer->updateTimeout(std::chrono::milliseconds(8));
+    return;
+  }
+  for (const auto &q : g_quiet)
+    if (const auto w = q.window.lock(); w && q.setNoAnim)
+      w->m_ruleApplicator->noAnim().unset(Desktop::Types::PRIORITY_SET_PROP);
+  g_quiet.clear();
+}
+
+// Hyprland adds a decoration's room outside the window's content, so the tab
+// bar appearing would push the window's top (title bar) up by its height.
+// Floating windows move their content down and shrink it instead; tiled ones
+// keep their tile and lay out inside it already.
+void CTabBar::keepFrame(PHLWINDOW w, bool barShown) {
+  const PHLWINDOWREF ref = w;
+  g_pEventLoopManager->doLater([ref, barShown] {
+    const auto w = ref.lock();
+    if (!validMapped(w))
+      return;
+    const auto target = w->layoutTarget();
+    if (!target || !target->floating() || !target->space())
+      return;
+    const double h = cfg.height->value();
+    CBox box = target->position();
+    const double delta = barShown ? h : -h;
+    if (box.h - delta < 50)
+      return;
+    box.y += delta;
+    box.h -= delta;
+    g_layoutManager->setTargetGeom(box, target);
+    quietGroupOf(w, false);
+  });
+}
 
 // ---------- New tabs ----------
 
@@ -652,6 +761,9 @@ void adoptIfPending(PHLWINDOW w) {
   const PHLWINDOWREF anchorRef = g_pending->anchor;
   const PHLWINDOWREF newRef = w;
   g_pending.reset();
+  // Before Hyprland starts the window's open animation.
+  quiet(w, true);
+  quietGroupOf(anchorRef.lock(), false);
   // Let the window finish opening (and Omarchy's rules place it) first.
   g_pEventLoopManager->doLater([anchorRef, newRef] {
     const auto anchor = anchorRef.lock();
@@ -664,6 +776,7 @@ void adoptIfPending(PHLWINDOW w) {
       return;
     anchor->m_group->add(nw);
     CTabBar::select(nw, anchor->m_group->size() - 1);
+    quietGroupOf(nw, false);
   });
 }
 
@@ -787,7 +900,23 @@ std::string tabsJson(eHyprCtlOutputFormat, std::string) {
   return out + "]";
 }
 
-CHyprSignalListener g_openListener, g_closeListener;
+CHyprSignalListener g_openListener, g_closeListener, g_unmapListener;
+
+// For tests: what is animating or fading out right now.
+std::string animJson(eHyprCtlOutputFormat, std::string) {
+  std::string animating;
+  for (const auto &w : Desktop::windowState()->windows()) {
+    if (!w || !w->m_isMapped)
+      continue;
+    bool busy = w->positionAnimation()->isBeingAnimated() || w->sizeAnimation()->isBeingAnimated();
+    for (int i = 0; i < Desktop::View::WINDOW_ALPHA_LAST; ++i)
+      busy = busy || w->alpha(static_cast<Desktop::View::eWindowAlpha>(i))->isBeingAnimated();
+    if (busy)
+      animating += std::format("{}\"0x{:x}\"", animating.empty() ? "" : ",", reinterpret_cast<uintptr_t>(w.get()));
+  }
+  return std::format("{{\"fadeouts\":{},\"animating\":[{}]}}", Desktop::fadingOutState()->fadeouts().size(), animating);
+}
+SP<SHyprCtlCommand> g_animCommand;
 SP<SHyprCtlCommand> g_ctlCommand;
 
 } // namespace
@@ -803,6 +932,11 @@ void init(HANDLE handle) {
   g_openListener = Event::bus()->m_events.window.open.listen([](PHLWINDOW w) {
     addBar(w);
     adoptIfPending(w);
+  });
+  // A tab closing: no fade-out, and no resize as the tab bar goes.
+  g_unmapListener = Event::bus()->m_events.window.close.listen([](PHLWINDOW w) {
+    if (w && w->m_group && w->m_group->size() > 1)
+      quietGroupOf(w, true);
   });
   g_closeListener = Event::bus()->m_events.window.destroy.listen([](PHLWINDOWREF w) {
     if (const auto p = w.lock())
@@ -821,6 +955,10 @@ void init(HANDLE handle) {
       },
       nullptr);
   g_pEventLoopManager->addTimer(g_labelTimer);
+
+  g_quietTimer = makeShared<CEventLoopTimer>(std::nullopt, [](SP<CEventLoopTimer>, void *) { onQuietTick(); }, nullptr);
+  g_pEventLoopManager->addTimer(g_quietTimer);
+  g_animCommand = HyprlandAPI::registerHyprCtlCommand(handle, SHyprCtlCommand{.name = "windowslike-anim", .exact = true, .fn = animJson});
 }
 
 void exit() {
@@ -829,7 +967,17 @@ void exit() {
     g_pEventLoopManager->removeTimer(g_labelTimer);
     g_labelTimer.reset();
   }
+  if (g_quietTimer) {
+    g_quietTimer->cancel();
+    g_pEventLoopManager->removeTimer(g_quietTimer);
+    g_quietTimer.reset();
+  }
+  for (const auto &q : g_quiet)
+    if (const auto w = q.window.lock(); w && q.setNoAnim)
+      w->m_ruleApplicator->noAnim().unset(Desktop::Types::PRIORITY_SET_PROP);
+  g_quiet.clear();
   g_openListener.reset();
+  g_unmapListener.reset();
   g_closeListener.reset();
   g_bars.clear();
   g_textures.clear();

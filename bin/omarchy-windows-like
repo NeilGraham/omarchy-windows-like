@@ -76,8 +76,16 @@ reload_plugin() {
     say "Hyprland was updated but is still running the old version; log out and back in to finish."
     return 0
   fi
+  # Hyprland only (re)loads config plugins when the config's list of them
+  # changes, so the new build is loaded by hand after unloading the old one.
   hyprctl plugin unload "$LIB" >/dev/null 2>&1 || true
-  hyprctl plugin load "$LIB" >/dev/null
+  hyprctl plugin load "$LIB" >/dev/null 2>&1 || true
+  local i
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    hyprctl plugin list -j 2>/dev/null | jq -e 'any(.[]?; .name == "windows-like-drag-events")' >/dev/null && return 0
+    sleep 0.2
+  done
+  fail "the plugin didn't load; see: hyprctl configerrors"
 }
 
 write_stub() {

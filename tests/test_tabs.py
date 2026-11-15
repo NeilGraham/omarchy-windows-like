@@ -17,6 +17,8 @@ artifacts = Path(sys.argv[2] if len(sys.argv) > 2 else '/tmp/owl-test-tabs')
 artifacts.mkdir(parents=True, exist_ok=True)
 
 EXTRA = f'''
+-- Animations on, as on a real desktop, so the test can see that tabs skip them.
+hl.config({{ animations = {{ enabled = true }} }})
 hl.plugin.load("{TITLEBARS}")
 -- Omarchy's helper, which the module uses for one binding.
 o = o or {{ bind = function(keys, desc, action) hl.bind(keys, action, {{ description = desc }}) end }}
@@ -40,6 +42,22 @@ def ctrl(n, key):
 
 def ctrl_k(n, keysym, shift=False):
   n.shortcut('Control_L', *(['Shift_L'] if shift else []), keysym)
+
+
+def quiet_while(n, done, settle=.5, timeout=6):
+  """Samples what animates until done() holds and `settle` seconds more;
+  returns the samples where anything moved or faded."""
+  busy, deadline, finished = [], time.time() + timeout, None
+  while time.time() < deadline:
+    a = json.loads(n.ctl('windowslike-anim'))
+    if a['animating'] or a['fadeouts']:
+      busy.append(a)
+    if finished is None and done():
+      finished = time.time()
+    if finished is not None and time.time() - finished > settle:
+      return busy
+    time.sleep(.01)
+  raise AssertionError('timed out')
 
 
 def center(box):
@@ -70,9 +88,11 @@ with Nested(artifacts, extra_config=EXTRA, extra_env={'OMARCHY_WINDOWS_LIKE_NATI
   assert tabs() == [], tabs()
   print('PASS: a single window shows no tab bar', flush=True)
 
-  # Ctrl + T: a second foot, in the same folder, as a new tab.
+  # Ctrl + T: a second foot, in the same folder, as a new tab: without an
+  # animation, and with the window's frame staying where it was.
+  before = n.client(w1['address'])
   ctrl(n, 't')
-  wait_for(lambda: len(foot_windows()) == 2, what='second foot window')
+  busy = quiet_while(n, lambda: len(foot_windows()) == 2 and tabs())
   bars = wait_for(lambda: tabs(), what='tab bar')
   bar = bars[0]
   assert len(bar['tabs']) == 2 and bar['current'] == 1, bar
@@ -81,6 +101,13 @@ with Nested(artifacts, extra_config=EXTRA, extra_env={'OMARCHY_WINDOWS_LIKE_NATI
                     what='folder labels')
   n.capture('tabs-two')
   print('PASS: Ctrl+T opens a new tab in the same folder', flush=True)
+  assert not busy, busy
+  print('PASS: opening a tab doesn\'t animate', flush=True)
+  TAB = 28
+  now = n.client(bar['window'])
+  assert now['at'] == [before['at'][0], before['at'][1] + TAB], (before['at'], now['at'])
+  assert now['size'] == [before['size'][0], before['size'][1] - TAB], (before['size'], now['size'])
+  print('PASS: the window\'s frame stays put as the tab bar appears', flush=True)
 
   # Terminal names follow what runs.
   n.key('sleep 300\n')
@@ -138,10 +165,16 @@ with Nested(artifacts, extra_config=EXTRA, extra_env={'OMARCHY_WINDOWS_LIKE_NATI
 
   # Middle click closes a tab; the bar goes away with the second-last tab.
   bar = tabs()[0]
-  click(*center(bar['tabs'][0]['box']), button='middle')
-  wait_for(lambda: len(foot_windows()) == 1, what='middle click')
-  wait_for(lambda: tabs() == [], what='bar to hide')
+  x, y = center(bar['tabs'][0]['box'])
+  n.pointer([f'move {x} {y}', 'wait 150', 'mdown', 'wait 60'])
+  n.pointer(['mup'])  # release separately, so the sampling below sees the close
+  busy = quiet_while(n, lambda: len(foot_windows()) == 1 and tabs() == [])
   print('PASS: middle click closes a tab, and one tab shows no bar', flush=True)
+  assert not busy, busy
+  print('PASS: closing a tab doesn\'t animate', flush=True)
+  last = foot_windows()[0]
+  assert last['at'] == before['at'] and last['size'] == before['size'], (before['at'], before['size'], last['at'], last['size'])
+  print('PASS: the window\'s frame stays put as the tab bar goes', flush=True)
 
   # Ctrl + W closes the last tab (the window).
   ctrl(n, 'w')
@@ -150,7 +183,16 @@ with Nested(artifacts, extra_config=EXTRA, extra_env={'OMARCHY_WINDOWS_LIKE_NATI
 
   # Other apps get the keys: a terminal of another class reads Ctrl+T raw.
   out = n.scratch / 'key.bin'
+  # (Also the control for the animation checks: an ordinary window opening,
+  # which isn't a tab, does animate, so they can see an animation.)
+  import threading
+  seen = []
+  watcher = threading.Thread(target=lambda: seen.extend(quiet_while(n, lambda: len(n.clients()) == 1, settle=.3)))
+  watcher.start()
   other = n.open_window(title='other', app_id='other-app', command=('sh', '-c', f'stty raw -echo; head -c1 > {out}; sleep 5'))
+  watcher.join()
+  assert seen, 'an ordinary window opening should animate'
+  print('PASS: control: an ordinary window opening animates', flush=True)
   n.ctl('dispatch', f'hl.dsp.focus({{ window = "address:{other["address"]}" }})')
   time.sleep(.5)
   ctrl(n, 't')

@@ -36,7 +36,9 @@ title bar as soon as it has a second tab, and loses it again at one. Each tab
 has a ✕ (on the active tab, and on any tab you hover), the **+** at the right
 opens another window of the same app as a new tab, middle-click closes a tab,
 and when tabs no longer fit the bar scrolls sideways with the wheel or
-touchpad. Tabs are Hyprland groups underneath, so Omarchy's group shortcuts
+touchpad. Opening and closing tabs is instant, like switching them (no
+window animations), and the window's frame stays put as the tab bar appears
+or goes: the bar takes its room from the content. Tabs are Hyprland groups underneath, so Omarchy's group shortcuts
 (Super + G, Super + Alt + 1–5…) work on them too.
 
 In **foot**, Mac Terminal's shortcuts work with Ctrl in place of Cmd:
