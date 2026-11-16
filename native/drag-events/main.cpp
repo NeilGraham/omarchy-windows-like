@@ -175,7 +175,7 @@ CBox outerBox(PHLWINDOW w) {
 SEdgeHit edgeAt(const Vector2D &pos) {
   static auto RESIZEONBORDER = CConfigValue<Config::INTEGER>("general:resize_on_border");
   static auto EXTENDGRAB = CConfigValue<Config::INTEGER>("general:extend_border_grab_area");
-  if (!*RESIZEONBORDER)
+  if (!*RESIZEONBORDER || !sideResizeEnabled())
     return {};
 
   const auto w = Desktop::viewState()->hitTest().windowAt(

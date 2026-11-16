@@ -6,6 +6,11 @@
 // Tabs: Hyprland groups drawn as a tab bar under the title bar, with a close
 // button on each tab, a "+" for a new tab of the same app, and horizontal
 // scrolling when the tabs don't fit. See tabs.cpp.
+
+// plugin:windows_like:side_resize (registered with the tab settings), read
+// by main.cpp's side resizing.
+bool sideResizeEnabled();
+
 namespace Tabs {
   void init(HANDLE handle);
   void exit();

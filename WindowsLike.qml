@@ -34,6 +34,12 @@ Item {
     property var manifest: null
     readonly property string pluginId: "io.github.neilgraham.windows-like"
 
+    // omarchy-windows-like settings (Windows-like Settings writes them).
+    Settings {
+        id: wl
+        sourceDir: root.manifest && root.manifest.__sourceDir ? String(root.manifest.__sourceDir) : ""
+    }
+
     // ---------- Tunables ----------
 
     // How close (logical px) the pointer must be to a screen edge.
@@ -428,6 +434,8 @@ Item {
         else if ((atRight && nearTop) || (atTop && nearRight)) corner = "tr";
         else if ((atLeft && nearBottom) || (atBottom && nearLeft)) corner = "bl";
         else if ((atRight && nearBottom) || (atBottom && nearRight)) corner = "br";
+        if (corner !== "" && !wl.get("snapping.corners", true))
+            corner = "";
         if (corner !== "") {
             root.showCard = false;
             var edges = (corner[0] === "t" ? "top" : "bottom") + "+" + (corner[1] === "l" ? "left" : "right");
@@ -436,7 +444,7 @@ Item {
             var q = root.quarters[corner];
             return { type: "zone", layout: q[0], zone: q[1], fromCard: false };
         }
-        if (atLeft || atRight) {
+        if ((atLeft || atRight) && wl.get("snapping.edges", true)) {
             root.showCard = false;
             if (!root.dwellOk(m, atLeft ? "left" : "right"))
                 return null;
@@ -448,15 +456,15 @@ Item {
         // The card opens when the pointer reaches the top and stays open while
         // it moves down onto the card.
         var cr = root.cardRect();
-        root.showCard = ly <= m.reserved[1] + root.pickerDistance
-            || (root.showCard && ly <= cr.y + cr.h + 48 && lx >= cr.x - 48 && lx <= cr.x + cr.w + 48);
+        root.showCard = wl.get("snapping.picker", true) && (ly <= m.reserved[1] + root.pickerDistance
+            || (root.showCard && ly <= cr.y + cr.h + 48 && lx >= cr.x - 48 && lx <= cr.x + cr.w + 48));
         if (root.showCard) {
             var hit = root.hitTest(lx, ly);
             if (hit.layout >= 0)
                 return { type: "zone", layout: hit.layout, zone: hit.zone, fromCard: true };
         }
         root.pendingEdge = "";
-        if (atTop && !root.edgeShared(m, "top"))
+        if (atTop && !root.edgeShared(m, "top") && wl.get("snapping.topMaximizes", true))
             return { type: "max" };
         return null;
     }
@@ -465,6 +473,8 @@ Item {
     // the window from the top of the work area to the bottom.
     function resizeTarget(ev, m) {
         root.showCard = false;
+        if (!wl.get("snapping.stretch", true))
+            return null;
         var c = root.clientByAddress(ev.address);
         var bar = root.titleBarFor(c);
         var b = root.borderSize;
@@ -478,7 +488,9 @@ Item {
         var bottomHit = ev.cy >= areaBottom - 1 - E && Math.abs(ev.cy - outerBottom) <= 48;
         if (!topHit && !bottomHit)
             return null;
-        return { type: "vmax", rect: { x: ev.x - b, y: a.y, w: ev.w + 2 * b, h: a.h } };
+        // Round the edges, not the height, as the zones do.
+        var top = Math.round(a.y), bottom = Math.round(a.y + a.h);
+        return { type: "vmax", rect: { x: ev.x - b, y: top, w: ev.w + 2 * b, h: bottom - top } };
     }
 
     // Lets a pointer resting on a shared edge snap without moving again.
@@ -503,7 +515,7 @@ Item {
         if (!root.dragSnappable)
             return;
         if (!t || !m) {
-            if (mode === "move")
+            if (mode === "move" && wl.get("snapping.restoreSize", true))
                 root.restoreAfterDrag(address, ev);
             else
                 root.forgetSize(address);
@@ -861,7 +873,7 @@ Item {
         return true;
     }
     readonly property bool dragEnabled: { root.overrides; root.settingsEntry; return root.setting("dragToSnap"); }
-    readonly property bool assistEnabled: { root.overrides; root.settingsEntry; return root.setting("snapAssist"); }
+    readonly property bool assistEnabled: { root.overrides; root.settingsEntry; return root.setting("snapAssist") && wl.get("snapping.assist", true); }
 
     function saveSetting(key, value) {
         var o = Object.assign({}, root.overrides);

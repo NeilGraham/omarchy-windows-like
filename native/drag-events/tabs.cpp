@@ -73,13 +73,16 @@ HANDLE g_handle = nullptr;
 // ---------- Config ----------
 
 struct {
-  SP<Config::Values::CIntValue> height, minWidth, fontSize;
+  SP<Config::Values::CIntValue> height, minWidth, fontSize, enabled, terminalNames, sideResize;
   SP<Config::Values::CStringValue> font, tabApps, terminals, tabPrograms, terminalPrograms;
   SP<Config::Values::CColorValue> bar, active, hover, text, textInactive, separator, button;
 } cfg;
 
 void registerConfig() {
   using namespace Config::Values;
+  cfg.enabled = makeShared<CIntValue>("plugin:windows_like:tabs", "Tabs on (1) or off (0)", 1);
+  cfg.sideResize = makeShared<CIntValue>("plugin:windows_like:side_resize", "Resize from the side pressed and show the top-edge cursor (1), or leave it to Hyprland (0)", 1);
+  cfg.terminalNames = makeShared<CIntValue>("plugin:windows_like:terminal_names", "Name terminal tabs after what runs in them (1) or use titles (0)", 1);
   cfg.height = makeShared<CIntValue>("plugin:windows_like:tab_height", "Height of the tab bar", 28);
   cfg.minWidth = makeShared<CIntValue>("plugin:windows_like:tab_min_width", "Narrowest a tab gets before the bar scrolls", 140);
   cfg.fontSize = makeShared<CIntValue>("plugin:windows_like:tab_font_size", "Tab title size", 11);
@@ -101,7 +104,7 @@ void registerConfig() {
   cfg.separator = makeShared<CColorValue>("plugin:windows_like:col.separator", "Line between inactive tabs", 0xff3a3a3c);
   cfg.button = makeShared<CColorValue>("plugin:windows_like:col.button_hover", "Close and + buttons under the pointer", 0xff48484a);
   for (const SP<Config::Values::IValue> v : std::initializer_list<SP<Config::Values::IValue>>{
-           cfg.height, cfg.minWidth, cfg.fontSize, cfg.font, cfg.tabApps, cfg.terminals, cfg.tabPrograms, cfg.terminalPrograms, cfg.bar, cfg.active, cfg.hover, cfg.text,
+           cfg.enabled, cfg.terminalNames, cfg.sideResize, cfg.height, cfg.minWidth, cfg.fontSize, cfg.font, cfg.tabApps, cfg.terminals, cfg.tabPrograms, cfg.terminalPrograms, cfg.bar, cfg.active, cfg.hover, cfg.text,
            cfg.textInactive, cfg.separator, cfg.button})
     HyprlandAPI::addConfigValueV2(g_handle, v);
 }
@@ -267,7 +270,7 @@ std::unordered_map<const void *, SLabel> g_labels;
 
 std::string computeLabel(PHLWINDOW w) {
   const std::string title = w->m_title;
-  if (!isTerminal(w))
+  if (!cfg.terminalNames->value() || !isTerminal(w))
     return title.empty() ? w->m_class : title;
 
   auto &label = g_labels[w.get()];
@@ -341,7 +344,7 @@ public:
 
   bool visible() const {
     const auto w = m_window.lock();
-    return w && w->m_group && w->m_group->size() > 1 && !Fullscreen::controller()->isFullscreen(w);
+    return cfg.enabled->value() && w && w->m_group && w->m_group->size() > 1 && !Fullscreen::controller()->isFullscreen(w);
   }
 
   SDecorationPositioningInfo getPositioningInfo() override {
@@ -823,7 +826,7 @@ void adoptIfPending(PHLWINDOW w) {
 
 bool tabAction(const std::string &action, long n) {
   const auto w = Desktop::focusState()->window();
-  if (!w || !hasTabShortcuts(w))
+  if (!cfg.enabled->value() || !w || !hasTabShortcuts(w))
     return false;
   const auto &group = w->m_group;
   if (action == "new")
@@ -959,6 +962,9 @@ SP<SHyprCtlCommand> g_animCommand;
 SP<SHyprCtlCommand> g_ctlCommand;
 
 } // namespace
+
+// For main.cpp's side resizing.
+bool sideResizeEnabled() { return !cfg.sideResize || cfg.sideResize->value(); }
 
 namespace Tabs {
 

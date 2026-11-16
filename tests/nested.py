@@ -153,14 +153,20 @@ class Nested:
       time.sleep(.1)
     raise RuntimeError('test window did not map')
 
-  def start_shell(self, qml: Path):
+  def start_shell(self, qml: Path, env: dict | None = None):
     """Runs the shell plugin on its own in Quickshell, with stand-in theme modules."""
     import shutil
     self.shell_dir = self.scratch / 'qs'
     shutil.copytree(HERE / 'qs-stub', self.shell_dir)
     shutil.copy(qml, self.shell_dir / qml.name)
+    for helper in ('Settings.qml',):
+      shutil.copy(qml.parent / helper, self.shell_dir / helper)
+    # The repo's defaults, and settings of the test's own (none unless it writes some).
+    self.settings_json = self.scratch / 'windows-like-settings.json'
+    shell_env = dict(self.env, OMARCHY_WINDOWS_LIKE_ROOT=str(qml.parent), OMARCHY_WINDOWS_LIKE_SETTINGS_JSON=str(self.settings_json),
+                     **(env or {}))
     self.shell_log = (self.artifacts / 'shell.log').open('w')
-    proc = subprocess.Popen(['qs', '-p', str(self.shell_dir)], env=self.env, stdout=self.shell_log, stderr=self.shell_log)
+    proc = subprocess.Popen(['qs', '-p', str(self.shell_dir)], env=shell_env, stdout=self.shell_log, stderr=self.shell_log)
     self._clients.append(proc)
     for _ in range(50):
       try:

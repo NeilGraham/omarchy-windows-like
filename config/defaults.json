@@ -1,0 +1,37 @@
+{
+  "taskbar": {
+    "enabled": true,
+    "style": "windows11",
+    "position": "bottom",
+    "height": 44,
+    "showWorkspaces": true,
+    "showLabels": false
+  },
+  "start": {
+    "superOpens": true,
+    "pinned": [],
+    "showRecent": true,
+    "showRecentlyInstalled": true
+  },
+  "snapping": {
+    "edges": true,
+    "corners": true,
+    "topMaximizes": true,
+    "picker": true,
+    "assist": true,
+    "stretch": true,
+    "restoreSize": true
+  },
+  "resizing": {
+    "sides": true
+  },
+  "tabs": {
+    "enabled": true,
+    "terminalShortcuts": true,
+    "terminalNames": true
+  },
+  "general": {
+    "floatingDefault": true,
+    "superZ": true
+  }
+}

@@ -15,8 +15,54 @@ if file then
   hl.plugin.load(native)
 end
 
+-- Settings: ~/.config/omarchy-windows-like/settings.json, which
+-- `omarchy-windows-like apply` (run by Windows-like Settings) turns into this
+-- Lua table. Missing keys fall back to the defaults below.
+-- OMARCHY_WINDOWS_LIKE_SETTINGS points tests at a settings file of their own.
+local settings = {}
+local settings_path = os.getenv("OMARCHY_WINDOWS_LIKE_SETTINGS") or (home .. "/.config/omarchy-windows-like/settings.lua")
+local settings_file = io.open(settings_path, "r")
+if settings_file then
+  settings_file:close()
+  local ok, loaded = pcall(dofile, settings_path)
+  if ok and type(loaded) == "table" then
+    settings = loaded
+  end
+end
+
+-- setting("tabs.enabled", true)
+local function setting(path, fallback)
+  local value = settings
+  for key in string.gmatch(path, "[^.]+") do
+    if type(value) ~= "table" then
+      return fallback
+    end
+    value = value[key]
+  end
+  if value == nil then
+    return fallback
+  end
+  return value
+end
+
 -- Super + Z: the snap layout picker for the focused window, like Win + Z.
-o.bind("SUPER + Z", "Snap layouts", hl.dsp.event("windows-like-toggle"))
+if setting("general.superZ", true) then
+  o.bind("SUPER + Z", "Snap layouts", hl.dsp.event("windows-like-toggle"))
+end
+
+-- ---------- Start menu ----------
+
+if setting("taskbar.enabled", true) then
+  -- Tapping Super alone opens Start, like Windows. As a release bind on the
+  -- key that is itself the modifier, Hyprland fires it only when nothing else
+  -- was pressed in between: Super + anything else shadows it.
+  if setting("start.superOpens", true) then
+    hl.bind("SUPER + Super_L", hl.dsp.event("windows-like-start"), { release = true, description = "Start menu" })
+  end
+  -- Omarchy's app grid lives in its dock, which the taskbar replaces: its key
+  -- opens Start's All apps instead.
+  o.rebind("SUPER + ALT + SPACE", "All apps", hl.dsp.event("windows-like-start-apps"))
+end
 
 -- ---------- Tabs ----------
 
@@ -68,6 +114,9 @@ if hl.plugin.windows_like then
         ["col.text_inactive"] = rgb("dark_foreground", "98989d"),
         ["col.separator"] = rgb("selection", "3a3a3c"),
         ["col.button_hover"] = rgb("selection", "3a3a3c"),
+        tabs = setting("tabs.enabled", true) and 1 or 0,
+        terminal_names = setting("tabs.terminalNames", true) and 1 or 0,
+        side_resize = setting("resizing.sides", true) and 1 or 0,
       },
     },
   })
@@ -86,12 +135,14 @@ local function tab(action, n)
   end
 end
 
-hl.bind("CTRL + T", tab("new"), { description = "New tab" })
-hl.bind("CTRL + W", tab("close"), { description = "Close tab" })
-for n = 1, 9 do
-  hl.bind("CTRL + " .. n, tab("select", n), { description = n == 9 and "Last tab" or ("Tab " .. n) })
+if setting("tabs.enabled", true) and setting("tabs.terminalShortcuts", true) then
+  hl.bind("CTRL + T", tab("new"), { description = "New tab" })
+  hl.bind("CTRL + W", tab("close"), { description = "Close tab" })
+  for n = 1, 9 do
+    hl.bind("CTRL + " .. n, tab("select", n), { description = n == 9 and "Last tab" or ("Tab " .. n) })
+  end
+  hl.bind("CTRL + TAB", tab("next"), { description = "Next tab" })
+  hl.bind("CTRL + SHIFT + TAB", tab("prev"), { description = "Previous tab" })
+  hl.bind("CTRL + SHIFT + bracketright", tab("next"), { description = "Next tab" })
+  hl.bind("CTRL + SHIFT + bracketleft", tab("prev"), { description = "Previous tab" })
 end
-hl.bind("CTRL + TAB", tab("next"), { description = "Next tab" })
-hl.bind("CTRL + SHIFT + TAB", tab("prev"), { description = "Previous tab" })
-hl.bind("CTRL + SHIFT + bracketright", tab("next"), { description = "Next tab" })
-hl.bind("CTRL + SHIFT + bracketleft", tab("prev"), { description = "Previous tab" })

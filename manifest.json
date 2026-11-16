@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "io.github.neilgraham.windows-like",
   "name": "Windows-like",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "Neil Graham",
   "license": "MIT",
-  "description": "Makes Omarchy's floating mode feel like Windows: drag windows to edges and corners to snap them, to the top to maximize or pick a layout, and stretch them to full height by their top or bottom border.",
+  "description": "Makes Omarchy feel like Windows: a Windows 11 or classic taskbar and start menu, snapping windows to edges, corners and layouts, Mac-style tabs, and resizing from any side.",
   "homepage": "https://github.com/NeilGraham/omarchy-windows-like",
   "repository": "https://github.com/NeilGraham/omarchy-windows-like",
   "keywords": [
@@ -16,10 +16,24 @@
     "hyprland"
   ],
   "kinds": [
-    "overlay"
+    "overlay",
+    "menu",
+    "bar-widget"
   ],
   "keepLoaded": true,
   "entryPoints": {
-    "overlay": "WindowsLike.qml"
+    "overlay": "WindowsLike.qml",
+    "menu": "WindowsLike.qml",
+    "barWidget": "Taskbar.qml"
+  },
+  "barWidget": {
+    "displayName": "Windows-like taskbar",
+    "description": "Start button, or pinned and running apps (setting \"part\": \"start\" | \"apps\")",
+    "category": "Windows-like",
+    "allowMultiple": true,
+    "defaultSection": "center",
+    "defaults": {
+      "part": "apps"
+    }
   }
 }

@@ -7,8 +7,10 @@ usage() {
   cat <<'USAGE'
 Usage: omarchy-windows-like <command>
 
-  setup      Build the drag-events plugin, hook it into Hyprland, make floating
-             the default layout, and rebuild automatically after `omarchy update`
+  setup      Build the drag-events plugin, hook it into Hyprland, apply the
+             settings, and rebuild automatically after `omarchy update`
+  apply      Apply ~/.config/omarchy-windows-like/settings.json: taskbar layout,
+             position and height, dock, Hyprland module settings, floating default
   build      Rebuild the drag-events plugin for the running Hyprland, reload it,
              and restart the shell so it runs the current WindowsLike.qml
   status     Show what is installed
@@ -31,6 +33,16 @@ BASHRC="$HOME/.bashrc"
 # Ctrl + T opens a tab in foot, so fzf's file picker also gets Alt + T.
 FZF_LINE='declare -F fzf-file-widget >/dev/null && bind -m emacs-standard -x '"'"'"\et": fzf-file-widget'"'"' # omarchy-windows-like'
 FZF_COMMENT='# fzf file picker on Alt + T, since Ctrl + T opens a terminal tab (omarchy-windows-like)'
+
+PLUGIN_ID="io.github.neilgraham.windows-like"
+SETTINGS_DIR="$HOME/.config/omarchy-windows-like"
+SETTINGS="$SETTINGS_DIR/settings.json"
+SETTINGS_LUA="$SETTINGS_DIR/settings.lua"
+DEFAULTS="$REPO/config/defaults.json"
+STATE_DIR="$HOME/.local/state/omarchy-windows-like"
+BAR_BACKUP="$STATE_DIR/bar-backup.json"
+SHELL_JSON="$HOME/.config/omarchy/shell.json"
+SHELL_TOML="$HOME/.config/omarchy/shell.toml"
 
 say() { printf '%s\n' "$*"; }
 fail() { printf 'omarchy-windows-like: %s\n' "$*" >&2; exit 1; }
@@ -168,6 +180,178 @@ validate_hyprland() {
   [[ -z $errors ]] || { printf '%s\n' "$errors" >&2; fail "Hyprland reports config errors (see above)"; }
 }
 
+# ---------- Settings ----------
+
+# The user's settings laid over the defaults.
+merged_settings() {
+  if [[ -f $SETTINGS ]]; then
+    jq -s '.[0] * .[1]' "$DEFAULTS" "$SETTINGS"
+  else
+    cat "$DEFAULTS"
+  fi
+}
+
+setting() {
+  merged_settings | jq -r "$1"
+}
+
+# First run: start from the dock's pinned apps for both the taskbar and Start.
+seed_settings() {
+  [[ -f $SETTINGS ]] && return 0
+  mkdir -p "$SETTINGS_DIR"
+  local pins='[]'
+  if [[ -f $SHELL_JSON ]]; then
+    pins=$(jq -c '.dock.pinned // []' "$SHELL_JSON" 2>/dev/null || echo '[]')
+  fi
+  jq -n --argjson pins "$pins" '{taskbar: {pinned: $pins}, start: {pinned: $pins}}' >"$SETTINGS"
+}
+
+# The settings as a Lua table, for hypr/windows-like.lua.
+write_settings_lua() {
+  mkdir -p "$SETTINGS_DIR"
+  merged_settings | jq -r '
+    def lua: if type == "object" then "{ " + (to_entries | map("[\(.key | tojson)] = \(.value | lua)") | join(", ")) + " }"
+      elif type == "array" then "{ " + (map(lua) | join(", ")) + " }"
+      elif type == "string" then tojson
+      elif type == "null" then "nil"
+      else tostring end;
+    "-- Written by `omarchy-windows-like apply` from settings.json; edit that instead.\nreturn " + lua' >"$SETTINGS_LUA.new"
+  mv -f "$SETTINGS_LUA.new" "$SETTINGS_LUA"
+}
+
+# Rewrites shell.json with a jq filter (the shell reloads it on save).
+edit_shell_json() {
+  [[ -f $SHELL_JSON ]] || echo '{}' >"$SHELL_JSON"
+  local tmp
+  tmp=$(mktemp "$SHELL_JSON.XXXXXX")
+  if ! jq "$@" "$SHELL_JSON" >"$tmp"; then
+    rm -f "$tmp"
+    fail "could not update $SHELL_JSON"
+  fi
+  cat "$tmp" >"$SHELL_JSON"
+  rm -f "$tmp"
+}
+
+# The bar thickness lives in Omarchy's machine-wide shell.toml.
+set_bar_height() {
+  python3 - "$SHELL_TOML" "${1:-}" <<'PY'
+import re, sys
+path, height = sys.argv[1], sys.argv[2]
+try:
+    text = open(path).read()
+except FileNotFoundError:
+    text = ""
+mark = "# omarchy-windows-like taskbar height"
+lines = [l for l in text.splitlines() if not l.endswith(mark)]
+if height:
+    entry = f"size-horizontal = {int(height)} {mark}"
+    if "[bar]" in lines:
+        lines.insert(lines.index("[bar]") + 1, entry)
+    else:
+        lines += ([""] if lines and lines[-1] != "" else []) + ["[bar]", entry]
+# Drop a [bar] table left empty by removing our line.
+out = []
+for i, l in enumerate(lines):
+    if l == "[bar]":
+        rest = lines[i + 1:]
+        nxt = next((r for r in rest if r.strip()), "")
+        if nxt == "" or nxt.startswith("["):
+            continue
+    out.append(l)
+new = "\n".join(out).strip("\n")
+if new:
+    open(path, "w").write(new + "\n")
+elif text:
+    import os
+    os.remove(path)
+PY
+}
+
+dock_enabled() {
+  ! jq -e '(.disabledPlugins // []) | index("omarchy.dock")' "$SHELL_JSON" >/dev/null 2>&1
+}
+
+# The taskbar is Omarchy's bar, moved and re-laid out: workspaces on the left,
+# start and apps in the middle (Windows 11) or on the left (classic), and
+# everything else the bar had on the right, with the clock last.
+apply_taskbar() {
+  local enabled style position height workspaces
+  enabled=$(setting '.taskbar.enabled')
+  style=$(setting '.taskbar.style')
+  position=$(setting '.taskbar.position')
+  height=$(setting '.taskbar.height')
+  workspaces=$(setting '.taskbar.showWorkspaces')
+
+  if [[ $enabled != true ]]; then
+    if [[ -f $BAR_BACKUP ]]; then
+      edit_shell_json --slurpfile bar "$BAR_BACKUP" '.bar = $bar[0]'
+      rm -f "$BAR_BACKUP"
+      say "Restored Omarchy's bar."
+    fi
+    set_bar_height ""
+    if ! dock_enabled; then
+      omarchy plugin enable omarchy.dock >/dev/null 2>&1 || true
+    fi
+    return 0
+  fi
+
+  mkdir -p "$STATE_DIR"
+  if [[ ! -f $BAR_BACKUP ]]; then
+    jq '.bar // {}' "$SHELL_JSON" >"$BAR_BACKUP"
+  fi
+
+  edit_shell_json --slurpfile backup "$BAR_BACKUP" --arg id "$PLUGIN_ID" --arg style "$style" \
+    --arg position "$position" --argjson workspaces "$workspaces" '
+    ($backup[0].layout // {}) as $old
+    | ([($old.left // []), ($old.centerBegin // []), ($old.center // []), ($old.centerEnd // []), ($old.right // [])] | add) as $all
+    | ([$all[] | select(.id == "omarchy.clock")][0] // {id: "omarchy.clock"}) as $clock
+    | ([$all[] | select(.id == "omarchy.workspaces")][0] // {id: "omarchy.workspaces"}) as $ws
+    | [$all[] | select(.id as $i | ["omarchy.menu", "omarchy.workspaces", "omarchy.clock", $id] | index($i) | not)] as $rest
+    | {id: $id, part: "start"} as $start
+    | {id: $id, part: "apps"} as $apps
+    | (if $workspaces then [$ws] else [] end) as $wsl
+    | ($clock + {format: "h:mm AP\nM/d/yyyy"}) as $taskbarClock
+    | .bar = (($backup[0] // {}) + {
+        position: $position,
+        layout: {
+          left: (if $style == "classic" then [$start] + $wsl + [$apps] else $wsl end),
+          centerBegin: [],
+          center: (if $style == "classic" then [] else [$start, $apps] end),
+          centerEnd: [],
+          right: ($rest + [$taskbarClock]),
+          tray: ($old.tray // [])
+        }
+      })'
+  set_bar_height "$height"
+  # The dock would sit on top of windows and duplicate the taskbar.
+  if dock_enabled; then
+    omarchy plugin disable omarchy.dock >/dev/null 2>&1 || true
+  fi
+}
+
+apply_floating_default() {
+  command -v omarchy >/dev/null || return 0
+  local want current
+  want=$(setting '.general.floatingDefault')
+  current=$(omarchy hyprland workspace layout default 2>/dev/null || echo "")
+  if [[ $want == true && $current != floating ]]; then
+    omarchy hyprland workspace layout default floating >/dev/null
+  elif [[ $want != true && $current == floating ]]; then
+    omarchy hyprland workspace layout default dwindle >/dev/null
+  fi
+}
+
+cmd_apply() {
+  command -v jq >/dev/null || fail "jq is required"
+  seed_settings
+  write_settings_lua
+  apply_taskbar
+  apply_floating_default
+  if command -v hyprctl >/dev/null && hyprctl version >/dev/null 2>&1; then
+    hyprctl reload >/dev/null
+  fi
+}
+
 cmd_setup() {
   build
   write_stub
@@ -176,10 +360,7 @@ cmd_setup() {
   add_fzf_binding
   mkdir -p "$(dirname "$BIN_LINK")"
   ln -sfn "$REPO/bin/omarchy-windows-like" "$BIN_LINK"
-  if command -v omarchy >/dev/null && [[ $(omarchy hyprland workspace layout default 2>/dev/null) != floating ]]; then
-    omarchy hyprland workspace layout default floating >/dev/null
-    say "Floating is now the default workspace layout (Super + L still switches one workspace)."
-  fi
+  cmd_apply
   validate_hyprland
   reload_plugin
   reload_shell
@@ -202,6 +383,16 @@ cmd_status() {
 }
 
 cmd_uninstall() {
+  if [[ -f $BAR_BACKUP ]]; then
+    edit_shell_json --slurpfile bar "$BAR_BACKUP" '.bar = $bar[0]'
+    rm -f "$BAR_BACKUP"
+  fi
+  set_bar_height ""
+  # Taskbar widgets left in a bar that is still in use.
+  edit_shell_json --arg id "$PLUGIN_ID" '(.bar.layout // {}) |= with_entries(.value |= map(select(.id != $id)))'
+  if ! dock_enabled; then
+    omarchy plugin enable omarchy.dock >/dev/null 2>&1 || true
+  fi
   remove_require
   remove_fzf_binding
   rm -f "$HYPR_STUB" "$HOOK_FILE"
@@ -216,6 +407,7 @@ cmd_uninstall() {
 
 case ${1:-} in
   setup) cmd_setup ;;
+  apply) cmd_apply ;;
   build) cmd_build ;;
   status) cmd_status ;;
   uninstall) cmd_uninstall ;;
