@@ -178,6 +178,24 @@ with Nested(artifacts) as n:
   a, b = pair()
   assert near((a[2] - a0[2], b[0] - b0[0]), (DX, DX)), ('then the collapsed window, focused, moves both', a0, a, b0, b)
   print('PASS: squeezed from the neighbour\'s side, nothing overlaps and both still resize together', flush=True)
+
+  # A third window standing behind the neighbour, its left edge a little
+  # further right (here: a terminal left open underneath). It must not take
+  # the neighbour's place on the line.
+  a0, b0 = pair()
+  place(win['bl'], b0[0] - BORDER + 14, y0 + 170, x3, y3 - 30)
+  for addr in (win['bl'], win['tr'], ff):
+    n.ctl('dispatch', f'hl.dsp.window.alter_zorder({{ mode = "top", window = "address:{addr}" }})')
+  n.ctl('dispatch', f'hl.dsp.focus({{ window = "address:{ff}" }})')
+  time.sleep(.3)
+  behind0 = box(win['bl'])
+  a0, b0 = pair()
+  n.drag((a0[0] + a0[2] + 4, ym), (a0[0] + a0[2] + 4 + DX, ym), steps=12)
+  time.sleep(.4)
+  a, b = pair()
+  assert near((a[2] - a0[2], b[0] - b0[0], b[2] - b0[2]), (DX, DX, -DX)), ('the neighbour, not the window behind it', a0, a, b0, b)
+  assert box(win['bl']) == behind0, ('the window behind moved', behind0, box(win['bl']))
+  print('PASS: a window standing behind the neighbour doesn\'t take its place', flush=True)
   n.ctl('dispatch', f'hl.dsp.window.close({{ window = "address:{ff}" }})')
   time.sleep(.3)
 

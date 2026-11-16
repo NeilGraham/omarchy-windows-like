@@ -272,7 +272,8 @@ std::optional<SJoint> jointAt(PHLWINDOW w, uint8_t edge) {
   };
 
   std::vector<SEntry> before, after, pool;
-  (wBefore ? before : after).push_back({w, outerBox(w)});
+  const SEntry self{w, outerBox(w)};
+  (wBefore ? before : after).push_back(self);
   std::vector<const void *> targets{w->layoutTarget().get()};
   for (const auto &other : Desktop::windowState()->windows()) {
     if (!sameSpace(other, w))
@@ -285,46 +286,57 @@ std::optional<SJoint> jointAt(PHLWINDOW w, uint8_t edge) {
     pool.push_back({other, outerBox(other)});
   }
 
+  // The line has two sides: the grabbed window's edge, and the nearest edge
+  // facing it across the gap. A window further off (one standing behind the
+  // neighbour, say) never decides where the far side is.
+  const double beforeLine = wBefore ? endOf(self.box) : 0, afterLine0 = wBefore ? 0 : startOf(self.box);
+  std::optional<double> facing;
+  for (const auto &e : pool) {
+    if (!overlaps(e.box, self.box))
+      continue;
+    const double gap = wBefore ? startOf(e.box) - beforeLine : afterLine0 - endOf(e.box);
+    if (gap >= -ALIGN && gap <= GAP && (!facing || gap < *facing))
+      facing = gap;
+  }
+  if (!facing)
+    return std::nullopt;
+  const double lineBefore = wBefore ? beforeLine : afterLine0 - *facing;
+  const double lineAfter = wBefore ? beforeLine + *facing : afterLine0;
+  auto onBefore = [&](const CBox &b) { return std::abs(endOf(b) - lineBefore) <= ALIGN; };
+  auto onAfter = [&](const CBox &b) { return std::abs(startOf(b) - lineAfter) <= ALIGN; };
+  auto stackedWith = [&](const CBox &a, const CBox &b) {
+    const double apart = std::max(a.y - (b.y + b.h), b.y - (a.y + a.h));
+    return apart >= -ALIGN && apart <= GAP;
+  };
+
+  // Windows join a side when their edge is on that side's line and they touch
+  // the group: across the line from a window on the other side, or (for a
+  // vertical line, which runs on through columns) stacked above or below one
+  // on their own side. A horizontal line stays inside its column.
   for (bool grew = true; grew;) {
     grew = false;
     for (auto it = pool.begin(); it != pool.end();) {
-      bool join = false, joinBefore = false;
-      for (const auto &b : before)
-        if (overlaps(it->box, b.box) && startOf(it->box) - endOf(b.box) >= -ALIGN && startOf(it->box) - endOf(b.box) <= GAP &&
-            (after.empty() || std::abs(startOf(it->box) - startOf(after.front().box)) <= ALIGN)) {
-          join = true;
-          joinBefore = false;
-        }
-      for (const auto &a : after)
-        if (!join && overlaps(it->box, a.box) && startOf(a.box) - endOf(it->box) >= -ALIGN && startOf(a.box) - endOf(it->box) <= GAP &&
-            (before.empty() || std::abs(endOf(it->box) - endOf(before.front().box)) <= ALIGN)) {
-          join = true;
-          joinBefore = true;
-        }
-      // A vertical line runs on through the windows stacked above and below
-      // its members, lined up with them (the quarters under snapped halves):
-      // columns span the screen. A horizontal line stays inside its column,
-      // so dividing one column doesn't move the other's.
-      if (!join && vertical) {
-        auto stacked = [&](const std::vector<SEntry> &side, bool sideBefore) {
-          for (const auto &m : side) {
-            const bool aligned = sideBefore ? std::abs(endOf(it->box) - endOf(m.box)) <= ALIGN : std::abs(startOf(it->box) - startOf(m.box)) <= ALIGN;
-            const double apart = std::max(it->box.y - (m.box.y + m.box.h), m.box.y - (it->box.y + it->box.h));
-            if (aligned && apart >= -ALIGN && apart <= GAP)
-              return true;
-          }
-          return false;
-        };
-        if (stacked(before, true)) {
-          join = true;
-          joinBefore = true;
-        } else if (stacked(after, false)) {
-          join = true;
-          joinBefore = false;
-        }
+      int side = 0; // 1 before, 2 after
+      if (onAfter(it->box)) {
+        for (const auto &b : before)
+          if (overlaps(it->box, b.box))
+            side = 2;
+        if (vertical)
+          for (const auto &a : after)
+            if (stackedWith(it->box, a.box))
+              side = 2;
       }
-      if (join) {
-        (joinBefore ? before : after).push_back(*it);
+      if (!side && onBefore(it->box)) {
+        for (const auto &a : after)
+          if (overlaps(it->box, a.box))
+            side = 1;
+        if (vertical)
+          for (const auto &b : before)
+            if (stackedWith(it->box, b.box))
+              side = 1;
+      }
+      if (side) {
+        (side == 1 ? before : after).push_back(*it);
         it = pool.erase(it);
         grew = true;
       } else
