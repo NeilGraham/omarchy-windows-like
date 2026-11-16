@@ -302,7 +302,10 @@ BarWidget {
           sourceSize.width: width * 2
           sourceSize.height: height * 2
           source: root.iconFor(button.entry, button.modelData.windows.length ? button.modelData.windows[0].appId : button.modelData.key)
-          asynchronous: true
+          // Only a file loads off the main thread: an image://icon/ URL makes
+          // Quickshell draw a QIcon into a QPixmap, which Qt allows only on the
+          // main thread, and the shell crashes when it happens off it.
+          asynchronous: String(source).indexOf("file:") === 0
         }
 
         Text {

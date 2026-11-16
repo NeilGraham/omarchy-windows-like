@@ -203,7 +203,10 @@ KeyboardPanel {
       x: tile.wide ? Style.space(10) : Math.round((tile.width - width) / 2)
       y: tile.wide ? Math.round((tile.height - height) / 2) : Style.space(12)
       source: root.iconOf(tile.entry)
-      asynchronous: true
+      // Only a file loads off the main thread: an image://icon/ URL makes
+      // Quickshell draw a QIcon into a QPixmap, which Qt allows only on the
+      // main thread, and the shell crashes when it happens off it.
+      asynchronous: String(source).indexOf("file:") === 0
     }
 
     Column {
