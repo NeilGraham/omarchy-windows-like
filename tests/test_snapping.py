@@ -3,6 +3,7 @@ drag-events plugin, Omarchy's title bars and WindowsLike.qml all running.
 
 Usage: python -I tests/test_snapping.py native/drag-events/drag-events.so [artifacts-dir]
 """
+import json
 import sys
 import time
 from pathlib import Path
@@ -154,6 +155,16 @@ with Nested(artifacts) as n:
   w2 = n.open_window('second')
   addr2 = w2['address']
   n.ctl('dispatch', f'hl.dsp.window.tag({{ tag = "+omarchy-floating-workspace", window = "address:{addr2}" }})')
+  # A third window, red, covers the right half and sits on top: the window
+  # picked for the right half must come up over it.
+  cover = n.open_window('cover', command=('sh', '-c', 'sleep 120'), extra=('-o', 'colors-dark.background=cc0000'))
+  rx0 = AREA[0] + AREA[2] // 2 + 20
+  n.ctl('dispatch', f'hl.dsp.window.resize({{ x = {AREA[2] // 2 - 40}, y = {AREA[3] - 40}, relative = false, window = "address:{cover["address"]}" }})')
+  n.ctl('dispatch', f'hl.dsp.window.move({{ x = {rx0}, y = {AREA[1] + 40}, window = "address:{cover["address"]}" }})')
+  # The second window is the more recently focused, so snap assist offers it
+  # first; the cover still ends up on top of it.
+  n.ctl('dispatch', f'hl.dsp.focus({{ window = "address:{addr2}" }})')
+  n.ctl('dispatch', f'hl.dsp.window.alter_zorder({{ mode = "top", window = "address:{cover["address"]}" }})')
   w = reset(n, addr)
   n.ctl('dispatch', f'hl.dsp.focus({{ window = "address:{addr}" }})')
   time.sleep(.2)
@@ -172,5 +183,14 @@ with Nested(artifacts) as n:
   at, size = zone(.5, 0, .5, 1)
   check('snap assist -> second window fills the right half', n, addr2, want_at=at, want_size=size)
   assert n.ipc('state')['mode'] == '', n.ipc('state')
+  time.sleep(.4)
+  shot = artifacts / 'assist-raised.ppm'
+  cx, cy = at[0] + size[0] // 2, at[1] + size[1] // 2
+  import subprocess
+  subprocess.run(['grim', '-t', 'ppm', '-g', f'{cx},{cy} 1x1', str(shot)], env=n.env, check=True)
+  r, g, b = shot.read_bytes()[-3:]
+  assert not (r > 150 and g < 60 and b < 60), ('the covering window is still on top', (r, g, b))
+  assert json.loads(n.ctl('activewindow', '-j'))['address'] == addr2, 'the picked window should have focus'
+  print('PASS: the window picked by snap assist comes to the front', flush=True)
 
   print('ALL PASS', flush=True)

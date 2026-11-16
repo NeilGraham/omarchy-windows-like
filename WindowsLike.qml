@@ -249,10 +249,30 @@ Item {
         lua.push(moveTo);
         lua.push("hl.dispatch(hl.dsp.window.resize({ x = " + w + ", y = " + h + ", relative = false, window = '" + sel + "' }))");
         lua.push(moveTo);
-        lua.push("hl.dispatch(hl.dsp.focus({ window = '" + sel + "' }))");
-        lua.push("hl.dispatch(hl.dsp.window.bring_to_top())");
+        lua.push(root.raiseLua(sel));
         root.run(lua);
         root.rememberSize(address, c, w, h);
+        // Snap assist's overlay holds the keyboard while it is open, so focus
+        // asked for now can be refused; ask again once it has closed.
+        root.focusAfter = address;
+        focusTimer.restart();
+    }
+
+    // Focus and raise one window by address (bring_to_top only ever raises
+    // whichever window is focused).
+    function raiseLua(sel) {
+        return "hl.dispatch(hl.dsp.focus({ window = '" + sel + "' })); "
+            + "hl.dispatch(hl.dsp.window.alter_zorder({ mode = 'top', window = '" + sel + "' }))";
+    }
+
+    property string focusAfter: ""
+    Timer {
+        id: focusTimer
+        interval: 120
+        onTriggered: {
+            if (!root.opened && root.validAddress(root.focusAfter))
+                root.run([root.raiseLua("address:" + root.focusAfter)]);
+        }
     }
 
     function rememberSize(address, c, w, h) {
@@ -650,6 +670,8 @@ Item {
         root.candidates = [];
         if (root.shell && typeof root.shell.hide === "function")
             root.shell.hide(root.pluginId);
+        if (root.focusAfter !== "")
+            focusTimer.restart();
     }
 
     function startPicker() {

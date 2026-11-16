@@ -133,10 +133,10 @@ class Nested:
     self.ctl('plugin', 'load', str(path))
     time.sleep(.2)
 
-  def open_window(self, title='owl test', app_id='owl-test', cwd=None, command=('sleep', '120')):
+  def open_window(self, title='owl test', app_id='owl-test', cwd=None, command=('sleep', '120'), extra=()):
     """Opens a foot window; command=None runs the user's shell."""
     before = {c['address'] for c in self.clients()}
-    argv = ['foot', '-o', 'resize-by-cells=no', f'--app-id={app_id}']
+    argv = ['foot', '-o', 'resize-by-cells=no', *extra, f'--app-id={app_id}']
     if title:
       argv.append(f'--title={title}')
     if cwd:

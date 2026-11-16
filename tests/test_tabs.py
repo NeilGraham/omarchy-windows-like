@@ -176,12 +176,54 @@ with Nested(artifacts, extra_config=EXTRA, extra_env={'OMARCHY_WINDOWS_LIKE_NATI
   assert last['at'] == before['at'] and last['size'] == before['size'], (before['at'], before['size'], last['at'], last['size'])
   print('PASS: the window\'s frame stays put as the tab bar goes', flush=True)
 
+  # A window dropped on a tabbed window (on its tab bar, or anywhere on it)
+  # stays a window of its own: only Ctrl + T and "+" make tabs.
+  ctrl(n, 't')
+  bar = wait_for(lambda: tabs(), what='tabs again')[0]
+  stray = n.open_window(title='stray', app_id='stray-app')
+  n.ctl('dispatch', f'hl.dsp.window.move({{ x = 20, y = 300, window = "address:{stray["address"]}" }})')
+  time.sleep(.3)
+  stray = n.client(stray['address'])
+  for target in (center(bar['tabs'][0]['box']), center(bar['area'])[0:1] + (bar['bar'][1] + 120,)):
+    s0 = n.client(stray['address'])
+    grab = (s0['at'][0] + 100, s0['at'][1] - 15)
+    n.drag(grab, target)
+    time.sleep(.3)
+    assert not n.client(stray['address'])['grouped'], ('dropped window joined the tabs', target)
+  assert len(tabs()[0]['tabs']) == 2, tabs()
+  n.ctl('dispatch', f'hl.dsp.window.close({{ window = "address:{stray["address"]}" }})')
+  wait_for(lambda: not any(c['address'] == stray['address'] for c in n.clients()), what='stray to close')
+  print('PASS: dropping a window on a tabbed window doesn\'t make it a tab', flush=True)
+  ctrl(n, 'w')
+  wait_for(lambda: tabs() == [], what='back to one tab')
+
   # Ctrl + W closes the last tab (the window).
   ctrl(n, 'w')
   wait_for(lambda: len(foot_windows()) == 0, what='Ctrl+W')
   print('PASS: Ctrl+W closes the tab', flush=True)
 
+  # A foot opened under an app id of its own (Omarchy's agent terminal is
+  # one) still gets the tab shortcuts.
+  agent = n.open_window(title=None, app_id='org.omarchy.agent', cwd=str(project), command=None)
+  n.ctl('dispatch', f'hl.dsp.focus({{ window = "address:{agent["address"]}" }})')
+  time.sleep(.3)
+  ctrl(n, 't')
+  bar = wait_for(lambda: tabs(), what='a tab from the agent terminal')[0]
+  assert len(bar['tabs']) == 2, bar
+  joined = [c for c in n.clients() if c['address'] != agent['address']][0]
+  assert joined['class'] == 'foot', joined  # a plain terminal, not another agent window
+  n.ctl('dispatch', f'hl.dsp.focus({{ window = "address:{joined["address"]}" }})')
+  ctrl(n, '1')
+  wait_for(lambda: tabs() and tabs()[0]['current'] == 0, what='Ctrl+1 from the new tab')
+  print('PASS: a foot with its own app id gets the tab shortcuts', flush=True)
+  for c in n.clients():
+    n.ctl('dispatch', f'hl.dsp.window.close({{ window = "address:{c["address"]}" }})')
+  wait_for(lambda: not n.clients(), what='windows to close')
+
   # Other apps get the keys: a terminal of another class reads Ctrl+T raw.
+  # (It is foot too, the only terminal at hand, so foot-by-program is off for
+  # this check: the class decides, as it does for every other app.)
+  n.ctl('eval', 'hl.config({ plugin = { windows_like = { tab_programs = "^$" } } })')
   out = n.scratch / 'key.bin'
   # (Also the control for the animation checks: an ordinary window opening,
   # which isn't a tab, does animate, so they can see an animation.)

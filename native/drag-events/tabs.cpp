@@ -74,7 +74,7 @@ HANDLE g_handle = nullptr;
 
 struct {
   SP<Config::Values::CIntValue> height, minWidth, fontSize;
-  SP<Config::Values::CStringValue> font, tabApps, terminals;
+  SP<Config::Values::CStringValue> font, tabApps, terminals, tabPrograms, terminalPrograms;
   SP<Config::Values::CColorValue> bar, active, hover, text, textInactive, separator, button;
 } cfg;
 
@@ -88,6 +88,11 @@ void registerConfig() {
                                          "^(foot|footclient)$");
   cfg.terminals = makeShared<CStringValue>("plugin:windows_like:terminals", "Classes (regex) of terminals, named after what runs in them",
                                            "^(foot|footclient|kitty|Alacritty|com\\.mitchellh\\.ghostty)$");
+  cfg.tabPrograms = makeShared<CStringValue>("plugin:windows_like:tab_programs",
+                                             "Programs (regex on the executable's name) whose tab shortcuts act on tabs, whatever their class",
+                                             "^(foot|footclient)$");
+  cfg.terminalPrograms = makeShared<CStringValue>("plugin:windows_like:terminal_programs", "Programs (regex on the executable's name) that are terminals",
+                                                  "^(foot|footclient|kitty|alacritty|ghostty)$");
   cfg.bar = makeShared<CColorValue>("plugin:windows_like:col.bar", "Tab bar and inactive tab color", 0xff161618);
   cfg.active = makeShared<CColorValue>("plugin:windows_like:col.active", "Active tab color", 0xff2c2c2e);
   cfg.hover = makeShared<CColorValue>("plugin:windows_like:col.hover", "Inactive tab under the pointer", 0xff222224);
@@ -96,7 +101,7 @@ void registerConfig() {
   cfg.separator = makeShared<CColorValue>("plugin:windows_like:col.separator", "Line between inactive tabs", 0xff3a3a3c);
   cfg.button = makeShared<CColorValue>("plugin:windows_like:col.button_hover", "Close and + buttons under the pointer", 0xff48484a);
   for (const SP<Config::Values::IValue> v : std::initializer_list<SP<Config::Values::IValue>>{
-           cfg.height, cfg.minWidth, cfg.fontSize, cfg.font, cfg.tabApps, cfg.terminals, cfg.bar, cfg.active, cfg.hover, cfg.text,
+           cfg.height, cfg.minWidth, cfg.fontSize, cfg.font, cfg.tabApps, cfg.terminals, cfg.tabPrograms, cfg.terminalPrograms, cfg.bar, cfg.active, cfg.hover, cfg.text,
            cfg.textInactive, cfg.separator, cfg.button})
     HyprlandAPI::addConfigValueV2(g_handle, v);
 }
@@ -133,6 +138,25 @@ std::string readLink(const std::string &path) {
 std::string baseName(const std::string &p) {
   const auto s = p.find_last_of('/');
   return s == std::string::npos ? p : p.substr(s + 1);
+}
+
+// The executable a window's process runs, e.g. "foot" for a foot window with
+// an app id of its own (Omarchy's agent terminal is one).
+std::string programOf(PHLWINDOW w) {
+  const auto pid = w ? w->getPID() : -1;
+  return pid > 0 ? baseName(readLink(std::format("/proc/{}/exe", pid))) : "";
+}
+
+pid_t parentOf(pid_t pid) {
+  const auto s = readFile(std::format("/proc/{}/stat", pid));
+  const auto close = s.rfind(')');
+  if (close == std::string::npos)
+    return -1;
+  std::istringstream in(s.substr(close + 2));
+  std::string state;
+  long ppid = -1;
+  in >> state >> ppid;
+  return static_cast<pid_t>(ppid);
 }
 
 struct SStat {
@@ -231,6 +255,10 @@ std::string terminalCwd(PHLWINDOW w) {
   return shell > 0 ? readLink(std::format("/proc/{}/cwd", shell)) : "";
 }
 
+bool isTerminal(PHLWINDOW w) { return classMatches(cfg.terminals, w->m_class) || classMatches(cfg.terminalPrograms, programOf(w)); }
+
+bool hasTabShortcuts(PHLWINDOW w) { return classMatches(cfg.tabApps, w->m_class) || classMatches(cfg.tabPrograms, programOf(w)); }
+
 struct SLabel {
   std::string text;
   std::string shellTitle; // the title while the shell waits, so a program's own title stands out
@@ -239,7 +267,7 @@ std::unordered_map<const void *, SLabel> g_labels;
 
 std::string computeLabel(PHLWINDOW w) {
   const std::string title = w->m_title;
-  if (!classMatches(cfg.terminals, w->m_class))
+  if (!isTerminal(w))
     return title.empty() ? w->m_class : title;
 
   auto &label = g_labels[w.get()];
@@ -585,13 +613,9 @@ private:
     return true;
   }
 
-  bool onDrop(PHLWINDOW dragged) {
-    const auto w = m_window.lock();
-    if (!w || !w->m_group || !dragged || dragged == w || !dragged->canBeGroupedInto(w->m_group))
-      return false;
-    w->m_group->add(dragged);
-    return true;
-  }
+  // Dropping a window on the tab bar doesn't make it a tab: only Ctrl + T and
+  // "+" do, so a window carried past another never merges into it.
+  bool onDrop(PHLWINDOW) { return false; }
 
 public:
   static void select(PHLWINDOW anyMember, size_t index) {
@@ -709,6 +733,7 @@ void CTabBar::keepFrame(PHLWINDOW w, bool barShown) {
 struct SPending {
   PHLWINDOWREF anchor;
   std::string cls;
+  pid_t pid = -1;
   std::chrono::steady_clock::time_point until;
 };
 std::optional<SPending> g_pending;
@@ -733,7 +758,10 @@ bool CTabBar::newTab(PHLWINDOW w) {
     return false;
   std::string cmd = shellQuote(exe);
   const auto base = baseName(exe);
-  if (classMatches(cfg.terminals, w->m_class)) {
+  // A new terminal tab is a plain terminal (default app id) in the current
+  // tab's folder, even from a terminal opened under an app id of its own.
+  std::string cls = w->m_class;
+  if (isTerminal(w)) {
     const auto cwd = terminalCwd(w);
     if (!cwd.empty()) {
       if (base == "foot" || base == "footclient" || base == "alacritty" || base == "ghostty")
@@ -742,10 +770,10 @@ bool CTabBar::newTab(PHLWINDOW w) {
         cmd += " --directory=" + shellQuote(cwd);
     }
     if (base == "foot" || base == "footclient")
-      cmd += " --app-id=" + shellQuote(w->m_class);
+      cls = base;
   }
-  g_pending = SPending{w, w->m_class, std::chrono::steady_clock::now() + std::chrono::seconds(10)};
-  Config::Supplementary::executor()->spawn(cmd);
+  const auto spawned = Config::Supplementary::executor()->spawn(cmd);
+  g_pending = SPending{w, cls, spawned ? static_cast<pid_t>(*spawned) : -1, std::chrono::steady_clock::now() + std::chrono::seconds(10)};
   return true;
 }
 
@@ -756,7 +784,18 @@ void adoptIfPending(PHLWINDOW w) {
     g_pending.reset();
     return;
   }
-  if (w->m_class != g_pending->cls || w == g_pending->anchor.lock())
+  if (w == g_pending->anchor.lock())
+    return;
+  // The window of the process we started (or a child of it), or failing that,
+  // one of the app's class: apps that open their windows from an already
+  // running process (a file manager, a browser) only match by class.
+  bool ours = false;
+  for (pid_t p = w->getPID(), i = 0; p > 1 && i < 4 && g_pending->pid > 0; p = parentOf(p), ++i)
+    if (p == g_pending->pid) {
+      ours = true;
+      break;
+    }
+  if (!ours && w->m_class != g_pending->cls)
     return;
   const PHLWINDOWREF anchorRef = g_pending->anchor;
   const PHLWINDOWREF newRef = w;
@@ -784,7 +823,7 @@ void adoptIfPending(PHLWINDOW w) {
 
 bool tabAction(const std::string &action, long n) {
   const auto w = Desktop::focusState()->window();
-  if (!w || !classMatches(cfg.tabApps, w->m_class))
+  if (!w || !hasTabShortcuts(w))
     return false;
   const auto &group = w->m_group;
   if (action == "new")

@@ -21,9 +21,13 @@ o.bind("SUPER + Z", "Snap layouts", hl.dsp.event("windows-like-toggle"))
 -- ---------- Tabs ----------
 
 -- Tabs are Hyprland groups drawn by the plugin's own tab bar, so Hyprland's
--- group bar stays off. New windows only join a group when asked to (a new
--- tab), and a new tab goes to the end, like on a Mac.
-hl.config({ group = { auto_group = false, insert_after_current = false, groupbar = { enabled = false } } })
+-- group bar stays off. Windows only join a group when asked to (a new tab):
+-- not as they open, and not when dropped on one (Hyprland's drag_into_group
+-- would merge a window carried over another into its tabs). A new tab goes
+-- to the end, like on a Mac.
+hl.config({
+  group = { auto_group = false, drag_into_group = 0, insert_after_current = false, groupbar = { enabled = false } },
+})
 
 -- The tab bar follows the Omarchy theme: the active tab takes the title bar's
 -- color so the two read as one, inactive tabs sit darker.
