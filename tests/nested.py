@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import socket
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -181,6 +182,20 @@ class Nested:
     out = subprocess.run(['qs', '-p', str(self.shell_dir), 'ipc', 'call', 'windowslike', *argv], env=self.env,
                          capture_output=True, text=True, timeout=5, check=True).stdout.strip()
     return json.loads(out) if out.startswith('{') else out
+
+  def open_minsize_window(self, app_id, min_width, min_height=200):
+    """A window whose app won't let it be smaller than min_width x min_height."""
+    before = {c['address'] for c in self.clients()}
+    proc = subprocess.Popen([sys.executable, '-I', str(HERE / 'minsize_window.py'), app_id, str(min_width), str(min_height)],
+                            env=dict(self.env, GDK_BACKEND='wayland', GTK_A11Y='none'), stdout=self.log, stderr=self.log)
+    self._clients.append(proc)
+    for _ in range(100):
+      new = [c for c in self.clients() if c['address'] not in before]
+      if new:
+        time.sleep(.5)
+        return self.client(new[0]['address'])
+      time.sleep(.1)
+    raise RuntimeError('min-size window did not map')
 
   def clients(self):
     return json.loads(self.ctl('clients', '-j'))

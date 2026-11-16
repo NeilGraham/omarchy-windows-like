@@ -215,9 +215,21 @@ SEdgeHit edgeAt(const Vector2D &pos) {
 
 struct SJointMember {
   PHLWINDOWREF window;
-  CBox start; // its layout box when the drag began
+  CBox start; // its box on screen (content) when the drag began
   bool before; // left of (or above) the line
 };
+
+// A window as it is on screen. Its layout box can be smaller: an app with a
+// minimum size (Firefox) stays wider than a box it was squeezed into.
+CBox realBox(PHLWINDOW w) { return CBox{w->positionAnimation()->goal(), w->sizeAnimation()->goal()}; }
+
+// The narrowest (or shortest) a window may become: its app's minimum, and
+// never under 100px.
+double minExtent(PHLWINDOW w, bool vertical) {
+  constexpr double MIN = 100;
+  const auto m = w->minSize();
+  return std::max(MIN, m ? (vertical ? m->x : m->y) : 0.0);
+}
 
 struct SJoint {
   bool active = false;
@@ -326,52 +338,74 @@ std::optional<SJoint> jointAt(PHLWINDOW w, uint8_t edge) {
   joint.primary = w;
   joint.vertical = vertical;
   joint.primaryBefore = wBefore;
-  joint.primaryStart = w->layoutTarget()->position();
+  joint.primaryStart = realBox(w);
   for (const auto &list : {&before, &after})
     for (const auto &e : *list)
       if (e.w != w)
-        joint.others.push_back({e.w, e.w->layoutTarget()->position(), list == &before});
+        joint.others.push_back({e.w, realBox(e.w), list == &before});
   return joint;
 }
 
-// Moves every other window's edge on the line as far as the grabbed one's
-// has moved, never making a window narrower (or shorter) than MIN.
+// Moves every window's edge on the line as far as the grabbed one's has
+// moved, but only as far as every window there can go: none gets narrower
+// (or shorter) than its minimum. When another window stops the line, the
+// grabbed one is held there too, so the windows never overlap.
 void applyJoint() {
-  constexpr double MIN = 100;
   const auto primary = g_joint.primary.lock();
   if (!g_joint.active || !validMapped(primary))
     return;
-  const CBox now = primary->layoutTarget()->position();
+  const bool V = g_joint.vertical;
+  auto lo = [&](const CBox &b) { return V ? b.x : b.y; };
+  auto len = [&](const CBox &b) { return V ? b.w : b.h; };
+
+  // How far the grabbed window's edge has moved, on screen: Hyprland holds it
+  // at the app's minimum size, so this already stops there.
+  const CBox now = realBox(primary);
   const CBox &s = g_joint.primaryStart;
-  double delta = g_joint.vertical ? (g_joint.primaryBefore ? (now.x + now.w) - (s.x + s.w) : now.x - s.x)
-                                  : (g_joint.primaryBefore ? (now.y + now.h) - (s.y + s.h) : now.y - s.y);
-  for (const auto &m : g_joint.others) {
-    const double size = g_joint.vertical ? m.start.w : m.start.h;
-    delta = m.before ? std::max(delta, MIN - size) : std::min(delta, size - MIN);
-  }
-  for (const auto &m : g_joint.others) {
-    const auto w = m.window.lock();
+  double delta = g_joint.primaryBefore ? (lo(now) + len(now)) - (lo(s) + len(s)) : lo(now) - lo(s);
+
+  // A window left of (or above) the line shrinks as the line moves back; one
+  // after it shrinks as the line moves on.
+  double low = -1e9, high = 1e9;
+  auto limit = [&](PHLWINDOW w, const CBox &start, bool before) {
+    const double room = len(start) - minExtent(w, V);
+    if (before)
+      low = std::max(low, -room);
+    else
+      high = std::min(high, room);
+  };
+  limit(primary, s, g_joint.primaryBefore);
+  for (const auto &m : g_joint.others)
+    if (const auto w = m.window.lock(); validMapped(w))
+      limit(w, m.start, m.before);
+  const double clamped = std::clamp(delta, std::min(low, 0.0), std::max(high, 0.0));
+
+  auto place = [&](PHLWINDOW w, CBox box, bool before, double d) {
     if (!validMapped(w) || !w->layoutTarget() || !w->layoutTarget()->floating() || !w->layoutTarget()->space())
-      continue;
-    CBox box = m.start;
-    if (g_joint.vertical) {
-      if (m.before)
-        box.w += delta;
+      return;
+    if (V) {
+      if (before)
+        box.w += d;
       else {
-        box.x += delta;
-        box.w -= delta;
+        box.x += d;
+        box.w -= d;
       }
     } else {
-      if (m.before)
-        box.h += delta;
+      if (before)
+        box.h += d;
       else {
-        box.y += delta;
-        box.h -= delta;
+        box.y += d;
+        box.h -= d;
       }
     }
     g_layoutManager->setTargetGeom(box, w->layoutTarget());
     w->layoutTarget()->warpPositionSize();
-  }
+  };
+  for (const auto &m : g_joint.others)
+    place(m.window.lock(), m.start, m.before, clamped);
+  // Another window can't go further: hold the grabbed one there as well.
+  if (std::abs(clamped - delta) > 0.5)
+    place(primary, s, g_joint.primaryBefore, clamped);
 }
 
 void applyJointSoon() {

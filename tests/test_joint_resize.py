@@ -109,7 +109,79 @@ with Nested(artifacts) as n:
   assert d['tr'] == (0, 0, 0, 0) and d['br'] == (0, 0, 0, 0), ('the right pair moved', d)
   print('PASS: a horizontal line moves only the two windows it divides', flush=True)
 
-  # 3. Turned off: only the window grabbed.
+  # 3. A window with a minimum width (as Firefox has) beside one without.
+  for name in names:
+    place(win[name], 100 + names.index(name) * 10, 100, 300, 300)
+  MINW = 520
+  ff = n.open_minsize_window('minwin', MINW)['address']
+  place(ff, x0, y0, xm - half, y3)
+  place(win['tr'], xm + half, y0, x3, y3)
+  for addr in (win['tr'], ff):
+    n.ctl('dispatch', f'hl.dsp.window.alter_zorder({{ mode = "top", window = "address:{addr}" }})')
+  time.sleep(.3)
+
+  def pair():
+    return box(ff), box(win['tr'])
+
+  a, b = pair()
+  gap = b[0] - (a[0] + a[2])
+  right = b[0] + b[2]
+  # Squeeze the shared edge far past the minimum: the line stops there, and
+  # the other window neither slides under it nor lets go of its right edge.
+  n.drag((a[0] + a[2] + 4, ym), (a[0] + a[2] - 400, ym), steps=16)
+  time.sleep(.4)
+  a, b = pair()
+  assert abs(a[2] - MINW) <= 2, ('stops at the minimum width', a)
+  assert b[0] - (a[0] + a[2]) == gap, ('no overlap: the gap stays', a, b, gap)
+  assert b[0] + b[2] == right, ('the far edge stays put', b, right)
+  print('PASS: the shared edge stops where a window reaches its minimum width', flush=True)
+
+  # Grabbing the collapsed window's own edge still moves both.
+  n.ctl('dispatch', f'hl.dsp.focus({{ window = "address:{ff}" }})')
+  n.ctl('dispatch', f'hl.dsp.window.alter_zorder({{ mode = "top", window = "address:{ff}" }})')
+  time.sleep(.3)
+  a0, b0 = pair()
+  n.drag((a0[0] + a0[2] + 4, ym), (a0[0] + a0[2] + 4 + DX, ym), steps=12)
+  time.sleep(.4)
+  a, b = pair()
+  assert near((a[2] - a0[2], b[0] - b0[0], b[2] - b0[2]), (DX, DX, -DX)), ('the collapsed window moves both', a0, a, b0, b)
+  print('PASS: a collapsed window, focused, still resizes with its neighbour', flush=True)
+
+  # The other way: the neighbour shrinks to its own minimum and holds both.
+  a0, b0 = pair()
+  n.drag((a0[0] + a0[2] + 4, ym), (b0[0] + b0[2] - 20, ym), steps=16)
+  time.sleep(.4)
+  a, b = pair()
+  assert b[2] >= 100 - 2 and b[0] - (a[0] + a[2]) == gap and b[0] + b[2] == right, ('held at the neighbour\'s minimum', a, b)
+  print('PASS: the edge stops where the other window reaches its minimum', flush=True)
+
+  # Grabbing the neighbour and squeezing the min-width window from its side:
+  # the grabbed neighbour is held where the other can't shrink any further,
+  # so it never slides over it, and the collapsed window's own edge then
+  # still moves both.
+  place(ff, x0, y0, xm - half, y3)
+  place(win['tr'], xm + half, y0, x3, y3)
+  n.ctl('dispatch', f'hl.dsp.focus({{ window = "address:{win["tr"]}" }})')
+  n.ctl('dispatch', f'hl.dsp.window.alter_zorder({{ mode = "top", window = "address:{win["tr"]}" }})')
+  time.sleep(.3)
+  a0, b0 = pair()
+  n.drag((b0[0] - 4, ym), (b0[0] - 4 - 500, ym), steps=16)
+  time.sleep(.4)
+  a, b = pair()
+  assert abs(a[2] - MINW) <= 2 and b[0] - (a[0] + a[2]) == gap, ('the grabbed neighbour is held at the other\'s minimum', a, b)
+  n.ctl('dispatch', f'hl.dsp.focus({{ window = "address:{ff}" }})')
+  n.ctl('dispatch', f'hl.dsp.window.alter_zorder({{ mode = "top", window = "address:{ff}" }})')
+  time.sleep(.3)
+  a0, b0 = pair()
+  n.drag((a0[0] + a0[2] + 4, ym), (a0[0] + a0[2] + 4 + DX, ym), steps=12)
+  time.sleep(.4)
+  a, b = pair()
+  assert near((a[2] - a0[2], b[0] - b0[0]), (DX, DX)), ('then the collapsed window, focused, moves both', a0, a, b0, b)
+  print('PASS: squeezed from the neighbour\'s side, nothing overlaps and both still resize together', flush=True)
+  n.ctl('dispatch', f'hl.dsp.window.close({{ window = "address:{ff}" }})')
+  time.sleep(.3)
+
+  # 4. Turned off: only the window grabbed.
   n.ctl('eval', 'hl.config({ plugin = { windows_like = { joint_resize = 0 } } })')
   time.sleep(.3)
   tl = box(win['tl'])
