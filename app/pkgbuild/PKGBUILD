@@ -6,6 +6,8 @@ arch=('x86_64' 'aarch64')
 license=('MIT')
 depends=('qt6-base' 'qt6-declarative' 'qt6-wayland' 'hicolor-icon-theme' 'jq')
 makedepends=('gcc' 'make')
+# No separate -debug package: the binary is built without debug symbols.
+options=('!debug')
 source=()
 sha256sums=()
 

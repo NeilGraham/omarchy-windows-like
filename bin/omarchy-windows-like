@@ -412,7 +412,9 @@ cmd_uninstall() {
 case ${1:-} in
   setup) cmd_setup ;;
   apply) cmd_apply ;;
-  install-app) exec "$REPO/app/bin/install" ;;
+  # Asking for the command is the confirmation, so pacman isn't asked again
+  # (it can't be, when run without a terminal to answer in).
+  install-app) shift; exec "$REPO/app/bin/install" --noconfirm "$@" ;;
   build) cmd_build ;;
   status) cmd_status ;;
   uninstall) cmd_uninstall ;;
