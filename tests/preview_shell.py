@@ -88,6 +88,19 @@ with Nested(artifacts, extra_config=extra, extra_env={'OMARCHY_WINDOWS_LIKE_NATI
   n.ctl('dispatch', 'hl.dsp.event("windows-like-start-apps")')
   time.sleep(.6)
 
+  # Right-click an app button (the middle of the bar, just right of Start)
+  # for its menu; every row must show.
+  width, height = n.size()
+  bar_y = height - 20 if position == 'bottom' else 20
+  app_x = round(width / 2) if style == 'windows11' else 140
+  n.pointer([f'move {app_x} {bar_y}', 'wait 200', 'rdown', 'wait 60', 'rup', 'wait 900'])
+  n.capture(f'{style}-{position}-app-menu')
+  n.pointer(['wait 100', f'move {round(width / 2)} {round(height / 2)}', 'down', 'wait 60', 'up', 'wait 500'])
+  # And a running app's, which has the most rows (new window, pin, close).
+  n.pointer([f'move {app_x + 45} {bar_y}', 'wait 200', 'rdown', 'wait 60', 'rup', 'wait 900'])
+  n.capture(f'{style}-{position}-running-app-menu')
+  n.pointer(['wait 100', f'move {round(width / 2)} {round(height / 2)}', 'down', 'wait 60', 'up', 'wait 500'])
+
   # The clock is the last widget on the bar: click it for the calendar.
   width, height = n.size()
   bar_y = height - 20 if position == 'bottom' else 20

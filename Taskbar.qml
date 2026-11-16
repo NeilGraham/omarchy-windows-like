@@ -396,8 +396,10 @@ BarWidget {
       bar: root.bar
       owner: contextOwner
       open: root.contextOpen
-      contentWidth: Style.space(220)
-      contentHeight: contextColumn.implicitHeight
+      // Both sizes are the card's, padding and border included: the
+      // panel's helpers add those to the rows' own height.
+      contentWidth: contextPanel.fittedContentWidth(Style.space(240))
+      contentHeight: contextPanel.fittedContentHeight(contextColumn.implicitHeight)
 
       Column {
         id: contextColumn

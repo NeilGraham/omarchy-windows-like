@@ -42,6 +42,10 @@ int main(int argc, char **argv) {
       zwlr_virtual_pointer_v1_button(pointer, now, 272, WL_POINTER_BUTTON_STATE_PRESSED);
     else if (!strcmp(command, "up"))
       zwlr_virtual_pointer_v1_button(pointer, now, 272, WL_POINTER_BUTTON_STATE_RELEASED);
+    else if (!strcmp(command, "rdown"))
+      zwlr_virtual_pointer_v1_button(pointer, now, 273, WL_POINTER_BUTTON_STATE_PRESSED);
+    else if (!strcmp(command, "rup"))
+      zwlr_virtual_pointer_v1_button(pointer, now, 273, WL_POINTER_BUTTON_STATE_RELEASED);
     else if (!strcmp(command, "mdown"))
       zwlr_virtual_pointer_v1_button(pointer, now, 274, WL_POINTER_BUTTON_STATE_PRESSED);
     else if (!strcmp(command, "mup"))
