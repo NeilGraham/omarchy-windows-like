@@ -88,6 +88,11 @@ omarchy plugin add https://github.com/NeilGraham/omarchy-windows-like --enable
 Other commands: `omarchy-windows-like status`, `omarchy-windows-like build`,
 `omarchy-windows-like uninstall`.
 
+After updating (`omarchy plugin update`, or `git pull` in a development
+checkout), run `omarchy-windows-like build`: it rebuilds the native plugin
+and restarts the shell, which keeps `WindowsLike.qml` loaded and doesn't
+notice changes made through a linked plugin folder.
+
 ### Settings
 
 ```sh

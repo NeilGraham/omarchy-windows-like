@@ -9,7 +9,8 @@ Usage: omarchy-windows-like <command>
 
   setup      Build the drag-events plugin, hook it into Hyprland, make floating
              the default layout, and rebuild automatically after `omarchy update`
-  build      Rebuild the drag-events plugin for the running Hyprland and reload it
+  build      Rebuild the drag-events plugin for the running Hyprland, reload it,
+             and restart the shell so it runs the current WindowsLike.qml
   status     Show what is installed
   uninstall  Undo everything setup did (the default layout is left as it is)
 USAGE
@@ -86,6 +87,15 @@ reload_plugin() {
     sleep 0.2
   done
   fail "the plugin didn't load; see: hyprctl configerrors"
+}
+
+# The shell plugin (WindowsLike.qml) is loaded once and kept loaded, and the
+# shell's file watcher doesn't follow a plugin folder that is a link (as a
+# development checkout is), so the shell is restarted to load the current code.
+reload_shell() {
+  command -v omarchy >/dev/null || return 0
+  omarchy-shell windowslike state >/dev/null 2>&1 || return 0
+  omarchy restart shell >/dev/null 2>&1 || true
 }
 
 write_stub() {
@@ -172,12 +182,14 @@ cmd_setup() {
   fi
   validate_hyprland
   reload_plugin
+  reload_shell
   say "Done. Drag a window by its title bar to an edge, a corner, or the top of the screen."
 }
 
 cmd_build() {
   build
   reload_plugin
+  reload_shell
 }
 
 cmd_status() {
