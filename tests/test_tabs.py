@@ -21,7 +21,10 @@ EXTRA = f'''
 hl.config({{ animations = {{ enabled = true }} }})
 hl.plugin.load("{TITLEBARS}")
 -- Omarchy's helper, which the module uses for one binding.
-o = o or {{ bind = function(keys, desc, action) hl.bind(keys, action, {{ description = desc }}) end }}
+o = o or {{
+  bind = function(keys, desc, action, opts) hl.bind(keys, action, opts or {{ description = desc }}) end,
+  rebind = function(keys, desc, action, opts) hl.bind(keys, action, opts or {{ description = desc }}) end,
+}}
 dofile("{HERE.parent / 'hypr' / 'windows-like.lua'}")
 '''
 
@@ -65,7 +68,12 @@ def center(box):
   return x + w // 2, y + h // 2
 
 
-with Nested(artifacts, extra_config=EXTRA, extra_env={'OMARCHY_WINDOWS_LIKE_NATIVE': str(plugin)}) as n:
+# The defaults, not whatever the person running the tests has chosen.
+no_settings = artifacts / 'no-settings.lua'
+no_settings.write_text('return {}\n')
+
+with Nested(artifacts, extra_config=EXTRA, extra_env={'OMARCHY_WINDOWS_LIKE_NATIVE': str(plugin),
+                                                      'OMARCHY_WINDOWS_LIKE_SETTINGS': str(no_settings)}) as n:
   def tabs():
     return json.loads(n.ctl('windowslike-tabs'))
 

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Windows-like Settings
+Comment=Taskbar and Start, snapping, tabs and more for omarchy-windows-like
+Exec=windows-like-settings
+Icon=windows-like-settings
+Terminal=false
+Categories=Settings;Utility;
+Keywords=windows;taskbar;start;snap;tabs;
+StartupWMClass=windows-like-settings

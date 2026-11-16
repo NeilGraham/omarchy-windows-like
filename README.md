@@ -9,6 +9,28 @@ without thinking.
 
 ## What you get
 
+**A Windows 11 taskbar and Start menu** (or a classic Windows 10 layout).
+Omarchy's bar moves to the bottom (or stays at the top), grows to taskbar
+height, and is laid out like Windows: workspaces on the left, the Omarchy mark
+and your apps in the middle (classic: on the left), the tray and indicators on
+the right with a two-line clock last, whose calendar opens above it.
+
+- App buttons show pinned and running apps, with Windows 11's line under a
+  running app and a longer accent line under the focused one. Click to open,
+  bring forward, minimize, or step through an app's windows; right-click to
+  pin, open another window, or close.
+- **Start** (tap **Super** on its own, or click the mark): search, pinned
+  apps, All apps A–Z, and Recommended — apps you used and installed recently —
+  with your name and power options. **Super + Alt + Space** opens All apps.
+- The bar reserves its space, so snapped, stretched and maximized windows
+  never end up behind it. Omarchy's dock steps aside while the taskbar is on.
+
+**Windows-like Settings**, an app in the launcher, turns each part on or off
+(see [app/README.md](app/README.md)). Settings live in
+`~/.config/omarchy-windows-like/settings.json`; `omarchy-windows-like apply`
+applies them, and turning the taskbar off brings back Omarchy's bar exactly as
+it was.
+
 **Snapping by dragging** (by the title bar, or with Super + drag):
 
 | Drop the window…                     | It becomes…                     |
@@ -85,8 +107,12 @@ omarchy plugin add https://github.com/NeilGraham/omarchy-windows-like --enable
 5. makes floating the default workspace layout,
 6. links `omarchy-windows-like` into `~/.local/bin`.
 
-Other commands: `omarchy-windows-like status`, `omarchy-windows-like build`,
-`omarchy-windows-like uninstall`.
+Then, for the settings app: `omarchy-windows-like install-app` (it asks for
+your password to install the package).
+
+Other commands: `omarchy-windows-like status`, `omarchy-windows-like apply`,
+`omarchy-windows-like build`, `omarchy-windows-like uninstall` (which also
+restores Omarchy's bar and dock).
 
 After updating (`omarchy plugin update`, or `git pull` in a development
 checkout), run `omarchy-windows-like build`: it rebuilds the native plugin
@@ -133,7 +159,16 @@ python -I tests/test_drag_events.py native/drag-events/drag-events.so
 python -I tests/test_snapping.py native/drag-events/drag-events.so
 python -I tests/test_edges.py native/drag-events/drag-events.so
 python -I tests/test_tabs.py native/drag-events/drag-events.so
+python -I tests/test_taskbar_space.py native/drag-events/drag-events.so
+python -I tests/test_keys.py native/drag-events/drag-events.so
+node --test tests/taskbar_model.test.js
+app/bin/test
 ```
+
+`tests/preview_shell.py` runs Omarchy's real shell, with the taskbar applied
+to a copy of your shell config, inside a nested Hyprland and takes screenshots
+of the taskbar, Start, All apps and the calendar
+(`python -I tests/preview_shell.py native/drag-events/drag-events.so /tmp/preview classic bottom`).
 
 `tests/keyboard.c` is a virtual keyboard with the standard US keymap: wtype
 uploads a keymap of its own, which Hyprland's key bindings don't match.

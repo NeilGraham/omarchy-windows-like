@@ -64,3 +64,16 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+
+## Omarchy
+
+- `assets/omarchy-mark.svg` is the Omarchy mark from
+  https://omarchy.org/brand/omarchy-logo.svg (recolored white so the taskbar
+  can tint it); the mark belongs to the Omarchy project.
+- `TaskbarModel.js`'s `claimingEntryId` and the minimized-window convention
+  follow Omarchy's dock (`shell/plugins/dock/DockModel.js`), and the taskbar
+  brings windows forward the way the dock does. Omarchy is MIT licensed,
+  Copyright (c) David Heinemeier Hansson.
+- Windows-like Settings (`app/`) follows Omarchy's app templates (Omacut,
+  Monologue): its theme and language handling are copied from them; see
+  `app/LICENSE`.
