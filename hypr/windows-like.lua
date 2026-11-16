@@ -117,6 +117,7 @@ if hl.plugin.windows_like then
         tabs = setting("tabs.enabled", true) and 1 or 0,
         terminal_names = setting("tabs.terminalNames", true) and 1 or 0,
         side_resize = setting("resizing.sides", true) and 1 or 0,
+        joint_resize = setting("resizing.joint", true) and 1 or 0,
       },
     },
   })

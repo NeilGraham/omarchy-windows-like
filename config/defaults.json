@@ -24,7 +24,8 @@
     "restoreSize": true
   },
   "resizing": {
-    "sides": true
+    "sides": true,
+    "joint": true
   },
   "tabs": {
     "enabled": true,

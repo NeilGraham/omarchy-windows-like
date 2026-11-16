@@ -204,6 +204,210 @@ SEdgeHit edgeAt(const Vector2D &pos) {
   return {w, edge};
 }
 
+// ---------- Resizing windows together ----------
+//
+// Windows standing side by side along a shared line (snapped halves, three
+// columns, quarters) resize together: dragging the line between them moves
+// that edge of every window on it. With four quarters, the vertical middle
+// line takes all four; the horizontal line between the two on the left takes
+// just those two. The window grabbed is resized by Hyprland as usual; the
+// others follow it after every move.
+
+struct SJointMember {
+  PHLWINDOWREF window;
+  CBox start; // its layout box when the drag began
+  bool before; // left of (or above) the line
+};
+
+struct SJoint {
+  bool active = false;
+  PHLWINDOWREF primary;
+  bool vertical = true; // a vertical line: the windows' widths change
+  bool primaryBefore = true;
+  CBox primaryStart;
+  std::vector<SJointMember> others;
+};
+SJoint g_joint;
+bool g_jointQueued = false;
+
+bool sameSpace(PHLWINDOW w, PHLWINDOW ref) {
+  return w && w != ref && validMapped(w) && !w->isHidden() && w->m_isFloating && w->m_workspace == ref->m_workspace &&
+         !Fullscreen::controller()->isFullscreen(w);
+}
+
+// The other windows on the line along `edge` (a single side) of w: those
+// facing it across the gap, and those on its side lined up with it.
+std::optional<SJoint> jointAt(PHLWINDOW w, uint8_t edge) {
+  using namespace Layout;
+  if (!w || !jointResizeEnabled() || !(edge == CORNER_LEFT || edge == CORNER_RIGHT || edge == CORNER_TOP || edge == CORNER_BOTTOM))
+    return std::nullopt;
+  const bool vertical = edge == CORNER_LEFT || edge == CORNER_RIGHT;
+  const bool wBefore = edge == CORNER_RIGHT || edge == CORNER_BOTTOM;
+  // How far apart facing edges may be (gaps, borders, a title bar), how
+  // closely edges on one side must line up, and how much windows must
+  // overlap along the line to share it.
+  constexpr double GAP = 48, ALIGN = 4, OVERLAP = 24;
+
+  struct SEntry {
+    PHLWINDOW w;
+    CBox box;
+  };
+  auto endOf = [&](const CBox &b) { return vertical ? b.x + b.w : b.y + b.h; }; // right or bottom
+  auto startOf = [&](const CBox &b) { return vertical ? b.x : b.y; };           // left or top
+  auto overlaps = [&](const CBox &a, const CBox &b) {
+    return vertical ? std::min(a.y + a.h, b.y + b.h) - std::max(a.y, b.y) > OVERLAP
+                    : std::min(a.x + a.w, b.x + b.w) - std::max(a.x, b.x) > OVERLAP;
+  };
+
+  std::vector<SEntry> before, after, pool;
+  (wBefore ? before : after).push_back({w, outerBox(w)});
+  std::vector<const void *> targets{w->layoutTarget().get()};
+  for (const auto &other : Desktop::windowState()->windows()) {
+    if (!sameSpace(other, w))
+      continue;
+    // A tab group is one target: count it once.
+    const void *t = other->layoutTarget().get();
+    if (std::ranges::find(targets, t) != targets.end())
+      continue;
+    targets.push_back(t);
+    pool.push_back({other, outerBox(other)});
+  }
+
+  for (bool grew = true; grew;) {
+    grew = false;
+    for (auto it = pool.begin(); it != pool.end();) {
+      bool join = false, joinBefore = false;
+      for (const auto &b : before)
+        if (overlaps(it->box, b.box) && startOf(it->box) - endOf(b.box) >= -ALIGN && startOf(it->box) - endOf(b.box) <= GAP &&
+            (after.empty() || std::abs(startOf(it->box) - startOf(after.front().box)) <= ALIGN)) {
+          join = true;
+          joinBefore = false;
+        }
+      for (const auto &a : after)
+        if (!join && overlaps(it->box, a.box) && startOf(a.box) - endOf(it->box) >= -ALIGN && startOf(a.box) - endOf(it->box) <= GAP &&
+            (before.empty() || std::abs(endOf(it->box) - endOf(before.front().box)) <= ALIGN)) {
+          join = true;
+          joinBefore = true;
+        }
+      // A vertical line runs on through the windows stacked above and below
+      // its members, lined up with them (the quarters under snapped halves):
+      // columns span the screen. A horizontal line stays inside its column,
+      // so dividing one column doesn't move the other's.
+      if (!join && vertical) {
+        auto stacked = [&](const std::vector<SEntry> &side, bool sideBefore) {
+          for (const auto &m : side) {
+            const bool aligned = sideBefore ? std::abs(endOf(it->box) - endOf(m.box)) <= ALIGN : std::abs(startOf(it->box) - startOf(m.box)) <= ALIGN;
+            const double apart = std::max(it->box.y - (m.box.y + m.box.h), m.box.y - (it->box.y + it->box.h));
+            if (aligned && apart >= -ALIGN && apart <= GAP)
+              return true;
+          }
+          return false;
+        };
+        if (stacked(before, true)) {
+          join = true;
+          joinBefore = true;
+        } else if (stacked(after, false)) {
+          join = true;
+          joinBefore = false;
+        }
+      }
+      if (join) {
+        (joinBefore ? before : after).push_back(*it);
+        it = pool.erase(it);
+        grew = true;
+      } else
+        ++it;
+    }
+  }
+  if (before.empty() || after.empty())
+    return std::nullopt;
+
+  SJoint joint;
+  joint.primary = w;
+  joint.vertical = vertical;
+  joint.primaryBefore = wBefore;
+  joint.primaryStart = w->layoutTarget()->position();
+  for (const auto &list : {&before, &after})
+    for (const auto &e : *list)
+      if (e.w != w)
+        joint.others.push_back({e.w, e.w->layoutTarget()->position(), list == &before});
+  return joint;
+}
+
+// Moves every other window's edge on the line as far as the grabbed one's
+// has moved, never making a window narrower (or shorter) than MIN.
+void applyJoint() {
+  constexpr double MIN = 100;
+  const auto primary = g_joint.primary.lock();
+  if (!g_joint.active || !validMapped(primary))
+    return;
+  const CBox now = primary->layoutTarget()->position();
+  const CBox &s = g_joint.primaryStart;
+  double delta = g_joint.vertical ? (g_joint.primaryBefore ? (now.x + now.w) - (s.x + s.w) : now.x - s.x)
+                                  : (g_joint.primaryBefore ? (now.y + now.h) - (s.y + s.h) : now.y - s.y);
+  for (const auto &m : g_joint.others) {
+    const double size = g_joint.vertical ? m.start.w : m.start.h;
+    delta = m.before ? std::max(delta, MIN - size) : std::min(delta, size - MIN);
+  }
+  for (const auto &m : g_joint.others) {
+    const auto w = m.window.lock();
+    if (!validMapped(w) || !w->layoutTarget() || !w->layoutTarget()->floating() || !w->layoutTarget()->space())
+      continue;
+    CBox box = m.start;
+    if (g_joint.vertical) {
+      if (m.before)
+        box.w += delta;
+      else {
+        box.x += delta;
+        box.w -= delta;
+      }
+    } else {
+      if (m.before)
+        box.h += delta;
+      else {
+        box.y += delta;
+        box.h -= delta;
+      }
+    }
+    g_layoutManager->setTargetGeom(box, w->layoutTarget());
+    w->layoutTarget()->warpPositionSize();
+  }
+}
+
+void applyJointSoon() {
+  if (g_jointQueued || !g_pEventLoopManager)
+    return;
+  g_jointQueued = true;
+  g_pEventLoopManager->doLater([] {
+    g_jointQueued = false;
+    applyJoint();
+  });
+}
+
+void endJoint() {
+  if (!g_joint.active)
+    return;
+  applyJoint();
+  g_joint = {};
+}
+
+// After each move or release: follow the grabbed window, or finish once the
+// drag is over.
+void jointTick() {
+  if (!g_joint.active)
+    return;
+  const auto *controller = g_layoutManager ? g_layoutManager->dragController().get() : nullptr;
+  const auto target = controller ? controller->target() : nullptr;
+  const auto primary = g_joint.primary.lock();
+  if (!controller || controller->mode() == MBIND_INVALID || controller->mode() == MBIND_MOVE || !target || !primary ||
+      target->window() != primary)
+    endJoint();
+  else
+    applyJointSoon();
+}
+
+const char *jointCursor(bool vertical) { return vertical ? "col-resize" : "row-resize"; }
+
 const char *cursorFor(uint8_t edge) {
   using namespace Layout;
   switch (edge) {
@@ -226,7 +430,9 @@ void updateCursor() {
   const bool dragging = g_layoutManager && g_layoutManager->dragController() &&
                         g_layoutManager->dragController()->mode() != MBIND_INVALID;
   const auto hit = (dragging || g_buttonsHeld > 0) ? SEdgeHit{} : edgeAt(g_pInputManager->getMouseCoordsInternal());
-  if (const auto name = cursorFor(hit.edge)) {
+  // A side shared with other windows shows that they resize together.
+  const auto joint = hit.edge ? jointAt(hit.window, hit.edge) : std::nullopt;
+  if (const auto name = joint ? jointCursor(joint->vertical) : cursorFor(hit.edge)) {
     overrideController->setOverride(name, CURSOR_OVERRIDE_WINDOW_EDGE);
     g_cursorSet = true;
   } else if (g_cursorSet) {
@@ -272,6 +478,11 @@ void onButton(const IPointer::SButtonEvent &e) {
     if (mode == MBIND_INVALID || mode == MBIND_MOVE || !target || target->window() != hit.window)
       return;
     g_layoutManager->beginDragTarget(target, mode, static_cast<Layout::eRectCorner>(hit.edge));
+    if (auto joint = jointAt(hit.window, hit.edge)) {
+      g_joint = *joint;
+      g_joint.active = true;
+      Pointer::Cursor::overrideController->setOverride(jointCursor(g_joint.vertical), Pointer::Cursor::CURSOR_OVERRIDE_SPECIAL_ACTION);
+    }
   });
 }
 
@@ -288,12 +499,15 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 
   static auto moveListener = Event::bus()->m_events.input.mouse.move.listen([](Vector2D pos, Event::SCallbackInfo &) {
     check(true);
+    jointTick();
     Tabs::onMouseMove(pos);
     updateCursorSoon();
   });
   static auto buttonListener = Event::bus()->m_events.input.mouse.button.listen([](IPointer::SButtonEvent e, Event::SCallbackInfo &) {
     onButton(e);
     checkSoon();
+    if (e.state != WL_POINTER_BUTTON_STATE_PRESSED && g_pEventLoopManager)
+      g_pEventLoopManager->doLater([] { jointTick(); });
   });
 
   Tabs::init(handle);

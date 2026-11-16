@@ -174,7 +174,7 @@ private slots:
                                    "taskbar.showWorkspaces", "taskbar.showLabels", "start.superOpens", "start.showRecent",
                                    "start.showRecentlyInstalled", "snapping.edges", "snapping.corners", "snapping.fillSpace", "snapping.topMaximizes",
                                    "snapping.picker", "snapping.assist", "snapping.stretch", "snapping.restoreSize",
-                                   "resizing.sides", "tabs.enabled", "tabs.terminalShortcuts", "tabs.terminalNames",
+                                   "resizing.sides", "resizing.joint", "tabs.enabled", "tabs.terminalShortcuts", "tabs.terminalNames",
                                    "general.floatingDefault", "general.superZ"})
             QVERIFY2(!Backend::valueAt(defaults, path).isUndefined(), qPrintable(path));
     }

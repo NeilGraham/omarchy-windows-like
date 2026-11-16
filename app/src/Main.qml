@@ -326,6 +326,11 @@ ApplicationWindow {
                             title: qsTr("Resize from any side")
                             description: qsTr("Dragging a side resizes in that direction only, and the top edge above the title bar resizes too.")
                         }
+                        SettingSwitch {
+                            path: "resizing.joint"
+                            title: qsTr("Resize snapped windows together")
+                            description: qsTr("Windows side by side (or one above another) share the edge between them: drag it and both resize. The cursor shows a split arrow there.")
+                        }
 
                         SectionLabel { text: qsTr("Tabs") }
                         SettingSwitch {

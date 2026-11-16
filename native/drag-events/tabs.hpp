@@ -10,6 +10,8 @@
 // plugin:windows_like:side_resize (registered with the tab settings), read
 // by main.cpp's side resizing.
 bool sideResizeEnabled();
+// plugin:windows_like:joint_resize: windows sharing an edge resize together.
+bool jointResizeEnabled();
 
 namespace Tabs {
   void init(HANDLE handle);

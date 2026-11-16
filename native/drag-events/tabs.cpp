@@ -73,7 +73,7 @@ HANDLE g_handle = nullptr;
 // ---------- Config ----------
 
 struct {
-  SP<Config::Values::CIntValue> height, minWidth, fontSize, enabled, terminalNames, sideResize;
+  SP<Config::Values::CIntValue> height, minWidth, fontSize, enabled, terminalNames, sideResize, jointResize;
   SP<Config::Values::CStringValue> font, tabApps, terminals, tabPrograms, terminalPrograms;
   SP<Config::Values::CColorValue> bar, active, hover, text, textInactive, separator, button;
 } cfg;
@@ -81,6 +81,7 @@ struct {
 void registerConfig() {
   using namespace Config::Values;
   cfg.enabled = makeShared<CIntValue>("plugin:windows_like:tabs", "Tabs on (1) or off (0)", 1);
+  cfg.jointResize = makeShared<CIntValue>("plugin:windows_like:joint_resize", "Resize windows that share an edge together (1) or one at a time (0)", 1);
   cfg.sideResize = makeShared<CIntValue>("plugin:windows_like:side_resize", "Resize from the side pressed and show the top-edge cursor (1), or leave it to Hyprland (0)", 1);
   cfg.terminalNames = makeShared<CIntValue>("plugin:windows_like:terminal_names", "Name terminal tabs after what runs in them (1) or use titles (0)", 1);
   cfg.height = makeShared<CIntValue>("plugin:windows_like:tab_height", "Height of the tab bar", 28);
@@ -104,7 +105,7 @@ void registerConfig() {
   cfg.separator = makeShared<CColorValue>("plugin:windows_like:col.separator", "Line between inactive tabs", 0xff3a3a3c);
   cfg.button = makeShared<CColorValue>("plugin:windows_like:col.button_hover", "Close and + buttons under the pointer", 0xff48484a);
   for (const SP<Config::Values::IValue> v : std::initializer_list<SP<Config::Values::IValue>>{
-           cfg.enabled, cfg.terminalNames, cfg.sideResize, cfg.height, cfg.minWidth, cfg.fontSize, cfg.font, cfg.tabApps, cfg.terminals, cfg.tabPrograms, cfg.terminalPrograms, cfg.bar, cfg.active, cfg.hover, cfg.text,
+           cfg.enabled, cfg.terminalNames, cfg.sideResize, cfg.jointResize, cfg.height, cfg.minWidth, cfg.fontSize, cfg.font, cfg.tabApps, cfg.terminals, cfg.tabPrograms, cfg.terminalPrograms, cfg.bar, cfg.active, cfg.hover, cfg.text,
            cfg.textInactive, cfg.separator, cfg.button})
     HyprlandAPI::addConfigValueV2(g_handle, v);
 }
@@ -965,6 +966,7 @@ SP<SHyprCtlCommand> g_ctlCommand;
 
 // For main.cpp's side resizing.
 bool sideResizeEnabled() { return !cfg.sideResize || cfg.sideResize->value(); }
+bool jointResizeEnabled() { return !cfg.jointResize || cfg.jointResize->value(); }
 
 namespace Tabs {
 

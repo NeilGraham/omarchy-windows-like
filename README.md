@@ -53,6 +53,12 @@ size it had before.
 **Full-height stretch:** drag a window's top or bottom border to the edge of
 the screen and it stretches from top to bottom, keeping its width.
 
+**Resizing snapped windows together:** windows standing side by side (or one
+above another) share the edge between them. Hover it and the cursor becomes a
+split arrow; drag it and every window on that edge resizes, like Windows 11.
+The vertical line through four quarters moves all four; a horizontal line
+moves only the two windows of its column.
+
 **Resizing like Windows:** dragging a window's side resizes it in that
 direction only (Hyprland on its own always resizes from the nearest corner),
 corners resize both ways, and the top edge above the title bar shows a resize
@@ -167,6 +173,7 @@ python -I tests/test_tabs.py native/drag-events/drag-events.so
 python -I tests/test_taskbar_space.py native/drag-events/drag-events.so
 python -I tests/test_keys.py native/drag-events/drag-events.so
 python -I tests/test_snap_fill.py native/drag-events/drag-events.so
+python -I tests/test_joint_resize.py native/drag-events/drag-events.so
 node --test tests/taskbar_model.test.js
 app/bin/test
 ```
