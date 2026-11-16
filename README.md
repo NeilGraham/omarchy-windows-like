@@ -40,6 +40,11 @@ it was.
 | at the very top edge                 | maximized                       |
 | on the layout picker near the top    | that zone (halves, ⅔ + ⅓, thirds, ½ + two quarters, quarters) |
 
+Next to a window that stands the full height of the screen (one snapped and
+then resized, or one stretched from top to bottom), a snapped window fills the
+room beside it instead of exactly half — so a window stretched down the middle
+and two snapped to the sides stand three side by side.
+
 A preview shows where the window will land before you let go. After a snap,
 **snap assist** offers your other windows for the rest of the layout (Tab to
 skip a space, Esc to stop). Dragging a snapped window away gives it back the
@@ -161,6 +166,7 @@ python -I tests/test_edges.py native/drag-events/drag-events.so
 python -I tests/test_tabs.py native/drag-events/drag-events.so
 python -I tests/test_taskbar_space.py native/drag-events/drag-events.so
 python -I tests/test_keys.py native/drag-events/drag-events.so
+python -I tests/test_snap_fill.py native/drag-events/drag-events.so
 node --test tests/taskbar_model.test.js
 app/bin/test
 ```

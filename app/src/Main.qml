@@ -278,6 +278,11 @@ ApplicationWindow {
                             description: qsTr("Drag a window into a corner.")
                         }
                         SettingSwitch {
+                            path: "snapping.fillSpace"
+                            title: qsTr("Fill the space beside other windows")
+                            description: qsTr("Snapped next to a window that stands the full height (snapped, or stretched top to bottom), a window fills the room beside it instead of exactly half.")
+                        }
+                        SettingSwitch {
                             path: "snapping.topMaximizes"
                             title: qsTr("Maximize at the top")
                             description: qsTr("Drag a window to the top edge of the screen.")

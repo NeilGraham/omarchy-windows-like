@@ -16,6 +16,7 @@
   "snapping": {
     "edges": true,
     "corners": true,
+    "fillSpace": true,
     "topMaximizes": true,
     "picker": true,
     "assist": true,

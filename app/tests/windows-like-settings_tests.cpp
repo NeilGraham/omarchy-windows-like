@@ -172,7 +172,7 @@ private slots:
         const QJsonObject defaults = read(QStringLiteral(SRCDIR "/../../config/defaults.json"));
         for (const QString path : {"taskbar.enabled", "taskbar.style", "taskbar.position", "taskbar.height",
                                    "taskbar.showWorkspaces", "taskbar.showLabels", "start.superOpens", "start.showRecent",
-                                   "start.showRecentlyInstalled", "snapping.edges", "snapping.corners", "snapping.topMaximizes",
+                                   "start.showRecentlyInstalled", "snapping.edges", "snapping.corners", "snapping.fillSpace", "snapping.topMaximizes",
                                    "snapping.picker", "snapping.assist", "snapping.stretch", "snapping.restoreSize",
                                    "resizing.sides", "tabs.enabled", "tabs.terminalShortcuts", "tabs.terminalNames",
                                    "general.floatingDefault", "general.superZ"})

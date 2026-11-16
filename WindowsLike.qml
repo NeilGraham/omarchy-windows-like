@@ -126,6 +126,7 @@ Item {
         var scale = Number(m.scale) || 1;
         var rotated = Number(m.transform) % 2 === 1;
         return {
+            id: Number(m.id),
             name: String(m.name),
             x: Number(m.x),
             y: Number(m.y),
@@ -192,6 +193,61 @@ Item {
         var left = Math.round(x1), right = Math.round(x2);
         var topEdge = Math.round(y1), bottom = Math.round(y2);
         return { x: left, y: topEdge, w: right - left, h: bottom - topEdge };
+    }
+
+    // Other windows standing the whole height of m's work area on its
+    // workspace: snapped ones, and any stretched from top to bottom. Their
+    // outer left and right edges, border and title bar included.
+    function fullHeightNeighbors(m, exceptAddress) {
+        var a = root.workArea(m);
+        var tolerance = Math.max(24, 2 * root.gapsOut);
+        var out = [];
+        for (var i = 0; i < root.clients.length; i++) {
+            var c = root.clients[i];
+            if (!c || c.address === exceptAddress || c.hidden === true || c.mapped === false || c.floating !== true
+                    || Number(c.fullscreen) > 0 || !c.workspace || Number(c.workspace.id) !== m.workspaceId
+                    || (c.monitor !== undefined && Number(c.monitor) !== m.id) || !c.at || !c.size)
+                continue;
+            var b = root.borderSize;
+            var top = c.at[1] - root.titleBarFor(c) - b;
+            var bottom = c.at[1] + c.size[1] + b;
+            if (top > a.y + tolerance || bottom < a.y + a.h - tolerance)
+                continue;
+            out.push({ left: c.at[0] - b, right: c.at[0] + c.size[0] + b });
+        }
+        return out;
+    }
+
+    // A left or right zone (a half, or a quarter) fitted to the room beside
+    // full-height windows: snapped next to a window that was snapped and then
+    // resized, it fills what that window leaves; beside a window stretched
+    // down the middle, it fills the side, so three can stand side by side.
+    // Null when nothing is in the way, or the room is too narrow: then the
+    // plain zone applies.
+    readonly property int minFitWidth: 160
+    function fittedZone(m, layoutIndex, zoneIndex, side) {
+        if (!wl.get("snapping.fillSpace", true))
+            return null;
+        var r = root.zoneOuterRect(m, layoutIndex, zoneIndex);
+        var a = root.workArea(m);
+        var neighbors = root.fullHeightNeighbors(m, root.dragAddress);
+        var bound = null;
+        for (var i = 0; i < neighbors.length; i++) {
+            var n = neighbors[i];
+            if (side === "left" && n.left > a.x + root.minFitWidth && (bound === null || n.left < bound))
+                bound = n.left;
+            if (side === "right" && n.right < a.x + a.w - root.minFitWidth && (bound === null || n.right > bound))
+                bound = n.right;
+        }
+        if (bound === null)
+            return null;
+        if (side === "left") {
+            var x2 = Math.round(bound - root.innerGap);
+            return x2 - r.x >= root.minFitWidth ? { x: r.x, y: r.y, w: x2 - r.x, h: r.h } : null;
+        }
+        var x1 = Math.round(bound + root.innerGap);
+        var right = r.x + r.w;
+        return right - x1 >= root.minFitWidth ? { x: x1, y: r.y, w: right - x1, h: r.h } : null;
     }
 
     function clientByAddress(address) {
@@ -442,14 +498,16 @@ Item {
             if (!root.dwellOk(m, edges))
                 return null;
             var q = root.quarters[corner];
-            return { type: "zone", layout: q[0], zone: q[1], fromCard: false };
+            return { type: "zone", layout: q[0], zone: q[1], fromCard: false,
+                     rect: root.fittedZone(m, q[0], q[1], corner[1] === "l" ? "left" : "right") };
         }
         if ((atLeft || atRight) && wl.get("snapping.edges", true)) {
             root.showCard = false;
             if (!root.dwellOk(m, atLeft ? "left" : "right"))
                 return null;
             var h = root.halves[atLeft ? "left" : "right"];
-            return { type: "zone", layout: h[0], zone: h[1], fromCard: false };
+            return { type: "zone", layout: h[0], zone: h[1], fromCard: false,
+                     rect: root.fittedZone(m, h[0], h[1], atLeft ? "left" : "right") };
         }
 
         // Near the top: the layout picker, or maximize at the very edge.
@@ -525,6 +583,9 @@ Item {
             root.maximize(address);
         } else if (t.type === "vmax") {
             root.placeOuter(address, t.rect);
+        } else if (t.rect) {
+            // Fitted beside other windows: no layout for snap assist to fill.
+            root.placeOuter(address, t.rect, m.workspaceId);
         } else {
             root.targetAddress = address;
             root.chooseZone(t.layout, t.zone);
@@ -928,7 +989,7 @@ Item {
         if (!root.dragActive || !t)
             return null;
         if (t.type === "zone")
-            return root.zoneOuterRect(root.monitor, t.layout, t.zone);
+            return t.rect || root.zoneOuterRect(root.monitor, t.layout, t.zone);
         if (t.type === "vmax")
             return t.rect;
         var m = root.monitor;
