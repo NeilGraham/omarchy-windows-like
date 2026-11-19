@@ -1,11 +1,19 @@
 // Tabs for any window, built on Hyprland groups.
 //
-// A window looks as it always has until it gets a second tab: then a tab bar
-// appears under its title bar (inside the border), one tab per window in the
-// group. Each tab has a close button (on the active tab, and on any tab under
-// the pointer), there is a "+" at the right that opens another window of the
-// same app as a new tab, and when the tabs no longer fit they keep a minimum
-// width and the bar scrolls sideways (wheel or touchpad).
+// The tabs sit in Omarchy's title bar: the app's logo where its name was,
+// then one tab per window in the group, then a "+" that opens another window
+// of the same app as a new tab, leaving the title bar's buttons free at the
+// right. Apps with tab shortcuts (foot) show their tab from the start; other
+// windows once they have a second tab. Each tab has a close button (on the
+// active tab, and on any tab under the pointer), and when the tabs no longer
+// fit they keep a minimum width and scroll sideways (wheel or touchpad). A
+// window without a title bar (a tiled one) gets a bar of its own under the
+// border instead, once it has a second tab.
+//
+// Clicks reach the tabs before the title bar does, through a hook on
+// CInputManager::onMouseButton: a press on a tab selects it and goes on to
+// the title bar (so the window drags from its tabs too); presses on a close
+// button or "+" stay with the tabs.
 //
 // Hyprland's own group bar is switched off by the Lua side
 // (group.groupbar.enabled = false); this draws instead.
@@ -40,7 +48,15 @@
 #include <hyprland/src/desktop/view/Window.hpp>
 #include <hyprland/src/desktop/rule/windowRule/WindowRuleApplicator.hpp>
 #include <hyprland/src/event/EventBus.hpp>
+#include <hyprland/src/managers/SeatManager.hpp>
 #include <hyprland/src/managers/XWaylandManager.hpp>
+#include <hyprland/src/managers/input/InputManager.hpp>
+#include <hyprland/src/desktop/state/ViewHitTester.hpp>
+#include <hyprland/src/desktop/state/ViewState.hpp>
+#include <hyprland/src/desktop/view/LayerSurface.hpp>
+#include <hyprland/src/output/Monitor.hpp>
+#include <hyprland/src/protocols/LayerShell.hpp>
+#include <hyprland/src/plugins/HookSystem.hpp>
 #include <hyprland/src/managers/eventLoop/EventLoopManager.hpp>
 #include <hyprland/src/managers/eventLoop/EventLoopTimer.hpp>
 #include <hyprland/src/managers/fullscreen/FullscreenController.hpp>
@@ -54,8 +70,12 @@ extern "C" {
 #include <lua.h>
 }
 
+#include <hyprgraphics/image/Image.hpp>
+
 #include <algorithm>
+#include <cctype>
 #include <chrono>
+#include <filesystem>
 #include <cmath>
 #include <format>
 #include <fstream>
@@ -73,9 +93,9 @@ HANDLE g_handle = nullptr;
 // ---------- Config ----------
 
 struct {
-  SP<Config::Values::CIntValue> height, minWidth, fontSize, enabled, terminalNames, sideResize, jointResize;
+  SP<Config::Values::CIntValue> height, minWidth, maxWidth, buttonsWidth, fontSize, enabled, terminalNames, sideResize, jointResize;
   SP<Config::Values::CStringValue> font, tabApps, terminals, tabPrograms, terminalPrograms;
-  SP<Config::Values::CColorValue> bar, active, hover, text, textInactive, separator, button;
+  SP<Config::Values::CColorValue> bar, titlebar, active, hover, text, textInactive, separator, button;
 } cfg;
 
 void registerConfig() {
@@ -84,8 +104,11 @@ void registerConfig() {
   cfg.jointResize = makeShared<CIntValue>("plugin:windows_like:joint_resize", "Resize windows that share an edge together (1) or one at a time (0)", 1);
   cfg.sideResize = makeShared<CIntValue>("plugin:windows_like:side_resize", "Resize from the side pressed and show the top-edge cursor (1), or leave it to Hyprland (0)", 1);
   cfg.terminalNames = makeShared<CIntValue>("plugin:windows_like:terminal_names", "Name terminal tabs after what runs in them (1) or use titles (0)", 1);
-  cfg.height = makeShared<CIntValue>("plugin:windows_like:tab_height", "Height of the tab bar", 28);
-  cfg.minWidth = makeShared<CIntValue>("plugin:windows_like:tab_min_width", "Narrowest a tab gets before the bar scrolls", 140);
+  cfg.height = makeShared<CIntValue>("plugin:windows_like:tab_height", "Height of the tab bar of a window without a title bar", 28);
+  cfg.minWidth = makeShared<CIntValue>("plugin:windows_like:tab_min_width", "Narrowest a tab gets before the tabs scroll", 140);
+  cfg.maxWidth = makeShared<CIntValue>("plugin:windows_like:tab_max_width", "Widest a tab gets", 220);
+  cfg.buttonsWidth = makeShared<CIntValue>("plugin:windows_like:tab_buttons_width",
+                                           "Room kept free at the right of the title bar for its buttons (Omarchy's: three of 20 px, 8 px apart, 10 px in)", 94);
   cfg.fontSize = makeShared<CIntValue>("plugin:windows_like:tab_font_size", "Tab title size", 11);
   cfg.font = makeShared<CStringValue>("plugin:windows_like:tab_font", "Tab title font", "sans-serif");
   cfg.tabApps = makeShared<CStringValue>("plugin:windows_like:tab_apps", "Classes (regex) whose tab shortcuts act on tabs",
@@ -97,7 +120,8 @@ void registerConfig() {
                                              "^(foot|footclient)$");
   cfg.terminalPrograms = makeShared<CStringValue>("plugin:windows_like:terminal_programs", "Programs (regex on the executable's name) that are terminals",
                                                   "^(foot|footclient|kitty|alacritty|ghostty)$");
-  cfg.bar = makeShared<CColorValue>("plugin:windows_like:col.bar", "Tab bar and inactive tab color", 0xff161618);
+  cfg.bar = makeShared<CColorValue>("plugin:windows_like:col.bar", "Tab bar of a window without a title bar", 0xff161618);
+  cfg.titlebar = makeShared<CColorValue>("plugin:windows_like:col.titlebar", "The title bar's color, laid over its title", 0xff2c2c2e);
   cfg.active = makeShared<CColorValue>("plugin:windows_like:col.active", "Active tab color", 0xff2c2c2e);
   cfg.hover = makeShared<CColorValue>("plugin:windows_like:col.hover", "Inactive tab under the pointer", 0xff222224);
   cfg.text = makeShared<CColorValue>("plugin:windows_like:col.text", "Active tab title", 0xfff5f5f7);
@@ -105,7 +129,8 @@ void registerConfig() {
   cfg.separator = makeShared<CColorValue>("plugin:windows_like:col.separator", "Line between inactive tabs", 0xff3a3a3c);
   cfg.button = makeShared<CColorValue>("plugin:windows_like:col.button_hover", "Close and + buttons under the pointer", 0xff48484a);
   for (const SP<Config::Values::IValue> v : std::initializer_list<SP<Config::Values::IValue>>{
-           cfg.enabled, cfg.terminalNames, cfg.sideResize, cfg.jointResize, cfg.height, cfg.minWidth, cfg.fontSize, cfg.font, cfg.tabApps, cfg.terminals, cfg.tabPrograms, cfg.terminalPrograms, cfg.bar, cfg.active, cfg.hover, cfg.text,
+           cfg.enabled, cfg.terminalNames, cfg.sideResize, cfg.jointResize, cfg.height, cfg.minWidth, cfg.maxWidth, cfg.buttonsWidth, cfg.fontSize, cfg.font, cfg.tabApps,
+           cfg.terminals, cfg.tabPrograms, cfg.terminalPrograms, cfg.bar, cfg.titlebar, cfg.active, cfg.hover, cfg.text,
            cfg.textInactive, cfg.separator, cfg.button})
     HyprlandAPI::addConfigValueV2(g_handle, v);
 }
@@ -292,19 +317,275 @@ std::string computeLabel(PHLWINDOW w) {
   return cmd.empty() ? title : cmd;
 }
 
+// ---------- App logos ----------
+//
+// The logo at the left of the tabs is the app's icon: the Icon= of its
+// .desktop file (found by name or StartupWMClass), looked up in the icon
+// theme GTK is set to, the themes it inherits, and hicolor.
+
+std::string lower(std::string s) {
+  std::ranges::transform(s, s.begin(), [](unsigned char c) { return std::tolower(c); });
+  return s;
+}
+
+std::vector<std::string> dataDirs() {
+  std::vector<std::string> out;
+  const char *home = getenv("HOME");
+  const char *dataHome = getenv("XDG_DATA_HOME");
+  if (dataHome && *dataHome)
+    out.emplace_back(dataHome);
+  else if (home)
+    out.emplace_back(std::string(home) + "/.local/share");
+  const char *dirs = getenv("XDG_DATA_DIRS");
+  std::stringstream ss(dirs && *dirs ? dirs : "/usr/local/share:/usr/share");
+  std::string d;
+  while (std::getline(ss, d, ':'))
+    if (!d.empty())
+      out.push_back(d);
+  return out;
+}
+
+// key=value from the [Desktop Entry] (or [Icon Theme]) group of an ini file.
+std::string iniValue(const std::string &text, const std::string &key) {
+  std::istringstream in(text);
+  std::string line;
+  bool mainGroup = false;
+  while (std::getline(in, line)) {
+    if (line.starts_with("[")) {
+      if (mainGroup)
+        break;
+      mainGroup = line == "[Desktop Entry]" || line == "[Icon Theme]" || line == "[Settings]";
+      continue;
+    }
+    if (mainGroup && line.starts_with(key + "=")) {
+      auto v = line.substr(key.size() + 1);
+      while (!v.empty() && (v.back() == '\r' || v.back() == ' '))
+        v.pop_back();
+      return v;
+    }
+  }
+  return "";
+}
+
+// The .desktop file of a window class: named after it, or else claiming it
+// with StartupWMClass. Empty when there is none.
+std::string desktopEntryFor(const std::string &cls) {
+  if (cls.empty())
+    return "";
+  const auto want = lower(cls);
+  std::string byWmClass;
+  for (const auto &dir : dataDirs()) {
+    const auto apps = dir + "/applications/";
+    for (const auto &name : {cls, want})
+      if (auto text = readFile(apps + name + ".desktop"); !iniValue(text, "Icon").empty() || !iniValue(text, "Name").empty())
+        return text;
+    if (!byWmClass.empty())
+      continue;
+    std::error_code ec;
+    for (const auto &entry : std::filesystem::directory_iterator(apps, ec)) {
+      if (entry.path().extension() != ".desktop")
+        continue;
+      auto text = readFile(entry.path());
+      if (lower(iniValue(text, "StartupWMClass")) == want) {
+        byWmClass = std::move(text);
+        break;
+      }
+    }
+  }
+  return byWmClass;
+}
+
+struct SAppInfo {
+  std::string name, iconPath; // iconPath "" when there is none
+};
+std::unordered_map<std::string, SAppInfo> g_apps; // class -> app
+
+std::string iconPathFor(const std::string &icon);
+
+const SAppInfo &appFor(const std::string &cls) {
+  auto it = g_apps.find(cls);
+  if (it != g_apps.end())
+    return it->second;
+  const auto entry = desktopEntryFor(cls);
+  auto icon = iniValue(entry, "Icon");
+  auto name = iniValue(entry, "Name");
+  return g_apps.emplace(cls, SAppInfo{name.empty() ? cls : name, iconPathFor(icon.empty() ? lower(cls) : icon)}).first->second;
+}
+
+// GTK's settings.ini, or else gsettings (where Omarchy sets it), read once.
+std::string iconThemeName() {
+  static std::optional<std::string> theme;
+  if (theme)
+    return *theme;
+  theme = "hicolor";
+  if (const char *home = getenv("HOME"))
+    for (const auto &file : {"/.config/gtk-4.0/settings.ini", "/.config/gtk-3.0/settings.ini"})
+      if (const auto v = iniValue(readFile(std::string(home) + file), "gtk-icon-theme-name"); !v.empty())
+        return *(theme = v);
+  if (FILE *p = popen("timeout 2 gsettings get org.gnome.desktop.interface icon-theme 2>/dev/null", "r")) {
+    char buf[256] = {};
+    const auto n = fread(buf, 1, sizeof(buf) - 1, p);
+    pclose(p);
+    std::string v(buf, n);
+    std::erase_if(v, [](char c) { return c == '\'' || c == '\n' || c == ' '; });
+    if (!v.empty())
+      theme = v;
+  }
+  return *theme;
+}
+
+std::string iconPathFor(const std::string &icon) {
+  if (icon.empty())
+    return "";
+  if (icon.starts_with("/"))
+    return std::filesystem::exists(icon) ? icon : "";
+  std::vector<std::string> bases;
+  if (const char *home = getenv("HOME"))
+    bases.push_back(std::string(home) + "/.icons");
+  for (const auto &d : dataDirs())
+    bases.push_back(d + "/icons");
+
+  // The theme, what it inherits, then hicolor.
+  std::vector<std::string> themes{iconThemeName()};
+  for (size_t i = 0; i < themes.size() && i < 8; ++i)
+    for (const auto &base : bases) {
+      const auto index = readFile(base + "/" + themes[i] + "/index.theme");
+      if (index.empty())
+        continue;
+      std::stringstream inherits(iniValue(index, "Inherits"));
+      std::string t;
+      while (std::getline(inherits, t, ','))
+        if (!t.empty() && std::ranges::find(themes, t) == themes.end())
+          themes.push_back(t);
+      break;
+    }
+  if (std::ranges::find(themes, "hicolor") == themes.end())
+    themes.push_back("hicolor");
+
+  for (const auto &theme : themes) {
+    std::string best;
+    int bestScore = -1;
+    for (const auto &base : bases) {
+      const auto root = base + "/" + theme;
+      const auto index = readFile(root + "/index.theme");
+      std::stringstream dirs(iniValue(index, "Directories") + "," + iniValue(index, "ScaledDirectories"));
+      std::string dir;
+      while (std::getline(dirs, dir, ',')) {
+        if (dir.empty() || dir.find("symbolic") != std::string::npos)
+          continue;
+        for (const auto ext : {".svg", ".png"}) {
+          const auto path = root + "/" + dir + "/" + icon + ext;
+          if (!std::filesystem::exists(path))
+            continue;
+          // Scalable first, then the size nearest 64 from at least 32.
+          int size = 0;
+          for (char c : dir) {
+            if (!std::isdigit(static_cast<unsigned char>(c))) {
+              if (size)
+                break;
+              continue;
+            }
+            size = size * 10 + (c - '0');
+          }
+          const int score = std::string(ext) == ".svg" ? 1000 : size >= 32 ? 500 - std::abs(size - 64) : size;
+          if (score > bestScore) {
+            bestScore = score;
+            best = path;
+          }
+        }
+      }
+    }
+    if (!best.empty())
+      return best;
+  }
+  for (const auto &d : dataDirs())
+    for (const auto ext : {".svg", ".png"})
+      if (const auto path = d + "/pixmaps/" + icon + ext; std::filesystem::exists(path))
+        return path;
+  return "";
+}
+
+std::unordered_map<std::string, SP<ITexture>> g_icons; // file@px -> texture (null when it didn't load)
+
+SP<ITexture> logoTexture(PHLWINDOW w, int px) {
+  const auto &path = appFor(w->m_class).iconPath;
+  if (path.empty())
+    return nullptr;
+  const auto key = std::format("{}@{}", path, px);
+  if (auto t = g_icons.find(key); t != g_icons.end())
+    return t->second;
+  SP<ITexture> tex;
+  Hyprgraphics::CImage image(path, Vector2D{static_cast<double>(px), static_cast<double>(px)});
+  if (image.success() && image.cairoSurface())
+    tex = g_pHyprRenderer->createTexture(image.cairoSurface()->cairo());
+  g_icons.emplace(key, tex);
+  return tex;
+}
+
 // ---------- The tab bar ----------
+//
+// Where Omarchy draws a title bar (hyprbars) the tabs sit in it: the app's
+// logo where its name was, then the tabs, then "+", leaving the title bar's
+// buttons at the right (and a little room to drag the window by). A window
+// without a title bar (a tiled one) gets a bar of its own under the border
+// instead, once it has a second tab.
 
 class CTabBar;
 std::vector<WP<CTabBar>> g_bars;
 Vector2D g_pointer{-1, -1};
-// Per group: how far the bar is scrolled, and which tab was last current.
+// The app's name, shown under the logo after the pointer rests on it.
+WP<CTabBar> g_tipBar;
+bool g_tipShown = false;
+SP<CEventLoopTimer> g_tipTimer;
+constexpr auto TIP_DELAY = std::chrono::milliseconds(500);
+// Per group (or per window, for a window with one tab): how far the tabs are
+// scrolled, and which tab was last current.
 struct SGroupState {
-  std::optional<bool> barShown;
+  std::optional<bool> ownBar;
   double scroll = 0;
   size_t lastCurrent = SIZE_MAX, lastN = 0;
   double lastTabW = 0, lastAreaW = 0;
 };
-std::unordered_map<const Desktop::View::CGroup *, SGroupState> g_groups;
+std::unordered_map<const void *, SGroupState> g_groups;
+
+const void *groupKey(PHLWINDOW w) { return w->m_group ? static_cast<const void *>(w->m_group.get()) : static_cast<const void *>(w.get()); }
+
+std::vector<PHLWINDOW> tabsOf(PHLWINDOW w) {
+  std::vector<PHLWINDOW> out;
+  if (!w->m_group) {
+    out.push_back(w);
+    return out;
+  }
+  for (const auto &ref : w->m_group->windows())
+    if (const auto m = ref.lock())
+      out.push_back(m);
+  return out;
+}
+
+// Omarchy's title bar on w, if it draws one.
+IHyprWindowDecoration *titleBarOf(PHLWINDOW w) {
+  if (!w || !w->m_ruleApplicator->decorate().valueOrDefault())
+    return nullptr;
+  for (const auto &d : w->m_windowDecorations) {
+    if (d->getDisplayName() != "Hyprbar")
+      continue;
+    const auto info = d->getPositioningInfo();
+    return info.policy == DECORATION_POSITION_STICKY && info.desiredExtents.topLeft.y > 0 ? d.get() : nullptr;
+  }
+  return nullptr;
+}
+
+// Apps whose tabs show from the first one (foot): their windows always have
+// a tab and a "+". Asked once per window, as it reads /proc.
+std::unordered_map<const void *, bool> g_alone;
+bool showsAlone(PHLWINDOW w) {
+  if (w->m_class.empty())
+    return false;
+  auto it = g_alone.find(w.get());
+  if (it == g_alone.end())
+    it = g_alone.emplace(w.get(), hasTabShortcuts(w)).first;
+  return it->second;
+}
 
 struct STextKey {
   std::string text;
@@ -336,6 +617,12 @@ struct SHit {
   size_t index = 0;
 };
 
+enum class eMode { Hidden, TitleBar, OwnBar };
+
+// Room left free between the "+" and the title bar's buttons, to drag the
+// window by when the tabs fill the bar.
+constexpr double DRAG_ROOM = 24;
+
 class CTabBar : public IHyprWindowDecoration {
 public:
   explicit CTabBar(PHLWINDOW w) : IHyprWindowDecoration(w), m_window(w) {}
@@ -343,20 +630,28 @@ public:
 
   PHLWINDOW owner() const { return m_window.lock(); }
 
-  bool visible() const {
+  eMode mode() const {
     const auto w = m_window.lock();
-    return cfg.enabled->value() && w && w->m_group && w->m_group->size() > 1 && !Fullscreen::controller()->isFullscreen(w);
+    if (!cfg.enabled->value() || !w)
+      return eMode::Hidden;
+    const bool tabs = w->m_group && w->m_group->size() > 1;
+    if (titleBarOf(w) && !Fullscreen::controller()->isFullscreen(w, Fullscreen::FSMODE_FULLSCREEN))
+      return tabs || showsAlone(w) ? eMode::TitleBar : eMode::Hidden;
+    return tabs && !Fullscreen::controller()->isFullscreen(w) ? eMode::OwnBar : eMode::Hidden;
   }
+
+  bool visible() const { return mode() != eMode::Hidden; }
 
   SDecorationPositioningInfo getPositioningInfo() override {
     SDecorationPositioningInfo info;
     info.policy = DECORATION_POSITION_STICKY;
     info.edges = DECORATION_EDGE_TOP;
     // Above Omarchy's title bar (10005) and the border (10000) means closest
-    // to the window: under the title bar, inside the border.
+    // to the window: under the title bar, inside the border. Tabs in the
+    // title bar take no room of their own.
     info.priority = 10010;
     info.reserved = true;
-    info.desiredExtents = {Vector2D{0.0, visible() ? static_cast<double>(cfg.height->value()) : 0.0}, Vector2D{0.0, 0.0}};
+    info.desiredExtents = {Vector2D{0.0, mode() == eMode::OwnBar ? static_cast<double>(cfg.height->value()) : 0.0}, Vector2D{0.0, 0.0}};
     return info;
   }
 
@@ -367,12 +662,19 @@ public:
   uint64_t getDecorationFlags() override { return DECORATION_ALLOWS_MOUSE_INPUT; }
   std::string getDisplayName() override { return "WindowsLikeTabs"; }
 
+  // The bar the tabs sit in, in global coordinates: the title bar, or the
+  // tab bar's own room.
   CBox boxGlobal() const {
     const auto w = m_window.lock();
-    CBox box = m_assignedBox;
     if (!w)
-      return box;
-    box.translate(g_pDecorationPositioner->getEdgeDefinedPoint(DECORATION_EDGE_TOP, w));
+      return {};
+    CBox box;
+    if (const auto title = mode() == eMode::TitleBar ? titleBarOf(w) : nullptr)
+      box = g_pDecorationPositioner->getWindowDecorationBox(title);
+    else {
+      box = m_assignedBox;
+      box.translate(g_pDecorationPositioner->getEdgeDefinedPoint(DECORATION_EDGE_TOP, w));
+    }
     if (w->m_workspace && !w->m_pinned)
       box.translate(w->m_workspace->m_renderOffset->value());
     return box.round();
@@ -385,10 +687,17 @@ public:
     auto box = boxGlobal();
     box.translate(w->m_floatingOffset);
     g_pHyprRenderer->damageBox(box);
+    if (m_tipBox.w > 0) {
+      auto tip = m_tipBox;
+      g_pHyprRenderer->damageBox(tip.translate(w->m_floatingOffset).expand(2));
+    }
   }
 
   struct SLayout {
-    CBox bar, area, plus;
+    CBox bar;   // the whole bar
+    CBox strip; // the part of it the tabs own: all of it but the title bar's buttons
+    CBox logo, area, plus;
+    bool inTitleBar = false;
     double tabW = 0, maxScroll = 0, scroll = 0;
     size_t n = 0, current = 0;
   };
@@ -396,41 +705,56 @@ public:
   SLayout layout() const {
     SLayout l;
     const auto w = m_window.lock();
-    if (!w || !w->m_group)
+    const auto MODE = mode();
+    if (!w || MODE == eMode::Hidden)
       return l;
+    l.inTitleBar = MODE == eMode::TitleBar;
     l.bar = boxGlobal();
-    l.n = w->m_group->size();
-    l.current = w->m_group->getCurrentIdx();
-    const double plusW = l.bar.h;
-    l.area = {l.bar.x, l.bar.y, std::max(0.0, l.bar.w - plusW), l.bar.h};
-    l.plus = {l.bar.x + l.area.w, l.bar.y, plusW, l.bar.h};
-    l.tabW = std::max(static_cast<double>(cfg.minWidth->value()), l.n ? l.area.w / l.n : l.area.w);
-    l.tabW = std::min(l.tabW, std::max(l.area.w, 1.0));
+    l.n = w->m_group ? w->m_group->size() : 1;
+    l.current = w->m_group ? w->m_group->getCurrentIdx() : 0;
+    const double h = l.bar.h;
+    const double right = l.inTitleBar ? l.bar.x + l.bar.w - cfg.buttonsWidth->value() - DRAG_ROOM : l.bar.x + l.bar.w;
+    l.strip = {l.bar.x, l.bar.y, std::max(0.0, right - l.bar.x), h};
+    // The logo in a square cell, its middle where the title's start was.
+    l.logo = {l.bar.x + 4, l.bar.y, std::min(h, l.strip.w), h};
+    const double plusW = h;
+    const double areaX = l.logo.x + l.logo.w + 2;
+    const double avail = std::max(0.0, l.strip.x + l.strip.w - areaX - plusW);
+    const double minW = cfg.minWidth->value(), maxW = std::max<double>(minW, cfg.maxWidth->value());
+    l.tabW = std::clamp(l.n ? avail / l.n : avail, minW, maxW);
+    l.tabW = std::min(l.tabW, std::max(avail, 1.0));
+    l.area = {areaX, l.bar.y, std::min(avail, l.tabW * l.n), h};
+    l.plus = {l.area.x + l.area.w, l.bar.y, plusW, h};
     l.maxScroll = std::max(0.0, l.tabW * l.n - l.area.w);
 
-    auto &gs = g_groups[w->m_group.get()];
+    auto &gs = g_groups[groupKey(w)];
     // Bring the current tab into view when it changes, or the tabs do.
     if (gs.lastCurrent != l.current || gs.lastN != l.n || gs.lastTabW != l.tabW || gs.lastAreaW != l.area.w) {
       gs.lastCurrent = l.current;
       gs.lastN = l.n;
       gs.lastTabW = l.tabW;
       gs.lastAreaW = l.area.w;
-      const double left = l.current * l.tabW, right = left + l.tabW;
+      const double left = l.current * l.tabW, rightEdge = left + l.tabW;
       if (left < gs.scroll)
         gs.scroll = left;
-      else if (right > gs.scroll + l.area.w)
-        gs.scroll = right - l.area.w;
+      else if (rightEdge > gs.scroll + l.area.w)
+        gs.scroll = rightEdge - l.area.w;
     }
     gs.scroll = std::clamp(gs.scroll, 0.0, l.maxScroll);
     l.scroll = gs.scroll;
     return l;
   }
 
+  // Where the tooltip goes for text of a width: under the logo.
+  CBox tipBox(const SLayout &l, double textW, double textH) const {
+    return CBox{l.logo.x, l.bar.y + l.bar.h + 4, textW + 16, textH + 8}.round();
+  }
+
   static CBox tabBox(const SLayout &l, size_t i) { return {l.area.x + i * l.tabW - l.scroll, l.bar.y, l.tabW, l.bar.h}; }
 
   static CBox closeBox(const SLayout &l, size_t i) {
     const auto t = tabBox(l, i);
-    const double s = std::round(l.bar.h * 0.6);
+    const double s = std::round(std::min(l.bar.h, 30.0) * 0.6);
     return {t.x + 6, t.y + (t.h - s) / 2, s, s};
   }
 
@@ -438,9 +762,10 @@ public:
     return i == l.current || (l.area.containsPoint(g_pointer) && tabBox(l, i).containsPoint(g_pointer));
   }
 
-  SHit hit(const Vector2D &pos) const {
-    const auto l = layout();
-    if (!l.bar.containsPoint(pos) || l.n == 0)
+  SHit hit(const Vector2D &pos) const { return hit(layout(), pos); }
+
+  SHit hit(const SLayout &l, const Vector2D &pos) const {
+    if (l.n == 0 || !l.strip.containsPoint(pos))
       return {};
     if (l.plus.containsPoint(pos))
       return {eHit::Plus, 0};
@@ -453,23 +778,24 @@ public:
   }
 
   void draw(PHLMONITOR mon, float const &a) override {
-    const bool VIS = visible();
-    if (!m_lastVisible.has_value() || *m_lastVisible != VIS) {
-      m_lastVisible = VIS;
+    const auto MODE = mode();
+    const bool own = MODE == eMode::OwnBar;
+    if (!m_lastOwn.has_value() || *m_lastOwn != own) {
+      m_lastOwn = own;
       g_pDecorationPositioner->repositionDeco(this);
     }
-    if (const auto w = m_window.lock(); w && w->m_group) {
-      // The bar showing or going: keep the window's frame where it is, and
-      // give the bar's room from (or back to) the content, like a Mac.
-      auto &gs = g_groups[w->m_group.get()];
-      if (gs.barShown.value_or(false) != VIS) {
-        gs.barShown = VIS;
-        keepFrame(w, VIS);
+    const auto w = m_window.lock();
+    if (w) {
+      // A bar of its own showing or going: keep the window's frame where it
+      // is, and give the bar's room from (or back to) the content, like a Mac.
+      auto &gs = g_groups[groupKey(w)];
+      if (gs.ownBar.value_or(false) != own) {
+        gs.ownBar = own;
+        keepFrame(w, own);
       }
     }
-    if (!VIS)
+    if (MODE == eMode::Hidden || !w)
       return;
-    const auto w = m_window.lock();
     const auto l = layout();
     if (l.bar.w <= 0 || l.bar.h <= 0)
       return;
@@ -482,6 +808,7 @@ public:
       return b.round();
     };
     const CBox clip = toMon(l.area);
+    const CBox stripClip = toMon(l.strip);
 
     auto rect = [&](const CBox &b, CHyprColor color, const CBox &clipBox, int round = 0) {
       if (b.w <= 0 || b.h <= 0)
@@ -494,30 +821,44 @@ public:
       d.round = round;
       g_pHyprRenderer->addPassElement(makeUnique<CRectPassElement>(d));
     };
-    auto tex = [&](const SP<ITexture> &t, const Vector2D &centerGlobal, const CBox &clipBox) {
+    // A texture centered on a point, at its own size or at `size`.
+    auto tex = [&](const SP<ITexture> &t, const Vector2D &centerGlobal, const CBox &clipBox, std::optional<Vector2D> size = std::nullopt) {
       if (!t)
         return;
       CTexPassElement::SRenderData d;
       d.tex = t;
       const Vector2D c = (centerGlobal + off) * scale;
-      d.box = CBox{std::round(c.x - t->m_size.x / 2.0), std::round(c.y - t->m_size.y / 2.0), t->m_size.x, t->m_size.y};
+      const Vector2D sz = size.value_or(t->m_size);
+      d.box = CBox{std::round(c.x - sz.x / 2.0), std::round(c.y - sz.y / 2.0), sz.x, sz.y};
       d.a = a;
       d.clipBox = clipBox;
       g_pHyprRenderer->addPassElement(makeUnique<CTexPassElement>(std::move(d)));
     };
 
-    const CHyprColor BAR(cfg.bar->value()), ACTIVE(cfg.active->value()), HOVER(cfg.hover->value()), TEXT(cfg.text->value()),
-        TEXTIN(cfg.textInactive->value()), SEP(cfg.separator->value()), BUTTON(cfg.button->value());
+    const CHyprColor BAR(cfg.bar->value()), TITLEBAR(cfg.titlebar->value()), ACTIVE(cfg.active->value()), HOVER(cfg.hover->value()),
+        TEXT(cfg.text->value()), TEXTIN(cfg.textInactive->value()), SEP(cfg.separator->value()), BUTTON(cfg.button->value());
     const int fontPx = std::round(cfg.fontSize->value() * scale);
-    const auto pointerHit = hit(g_pointer);
+    const auto pointerHit = hit(l, g_pointer);
 
-    rect(l.bar, BAR, {});
+    if (l.inTitleBar) {
+      // Over the title bar's own title, up to its buttons.
+      const double coverRight = l.bar.x + std::max(0.0, l.bar.w - cfg.buttonsWidth->value());
+      rect({l.bar.x, l.bar.y, coverRight - l.bar.x, l.bar.h}, TITLEBAR, {});
+    } else
+      rect(l.bar, BAR, {});
 
-    const auto windows = w->m_group->windows();
+    // The app's logo, or its initial when it has none.
+    const double logoSize = std::round(std::min(18.0, l.bar.h - 8));
+    const Vector2D logoCenter{l.logo.x + l.logo.w / 2, l.logo.y + l.logo.h / 2};
+    const int logoPx = std::max(1, static_cast<int>(std::round(logoSize * scale)));
+    if (const auto logo = logoTexture(w, logoPx))
+      tex(logo, logoCenter, stripClip, Vector2D{static_cast<double>(logoPx), static_cast<double>(logoPx)});
+    else if (!w->m_class.empty())
+      tex(textTexture(std::string(1, std::toupper(static_cast<unsigned char>(w->m_class[0]))), TEXT, std::round(fontPx * 1.2), 0), logoCenter, stripClip);
+
+    const auto windows = tabsOf(w);
     for (size_t i = 0; i < l.n && i < windows.size(); ++i) {
-      const auto tw = windows[i].lock();
-      if (!tw)
-        continue;
+      const auto &tw = windows[i];
       const auto t = tabBox(l, i);
       if (t.x + t.w < l.area.x || t.x > l.area.x + l.area.w)
         continue;
@@ -548,20 +889,27 @@ public:
 
     if (pointerHit.kind == eHit::Plus) {
       const CBox pb{l.plus.x + 4, l.plus.y + 4, l.plus.w - 8, l.plus.h - 8};
-      rect(pb, BUTTON, {}, std::round(4 * scale));
+      rect(pb, BUTTON, stripClip, std::round(4 * scale));
     }
-    tex(textTexture("+", TEXT, std::round(fontPx * 1.4), 0), {l.plus.x + l.plus.w / 2, l.plus.y + l.plus.h / 2}, {});
+    tex(textTexture("+", TEXT, std::round(fontPx * 1.4), 0), {l.plus.x + l.plus.w / 2, l.plus.y + l.plus.h / 2}, stripClip);
+
+    if (g_tipShown && g_tipBar.get() == this) {
+      const auto name = textTexture(appFor(w->m_class).name, TEXT, fontPx, 0);
+      if (name) {
+        m_tipBox = tipBox(l, name->m_size.x / scale, name->m_size.y / scale);
+        rect(m_tipBox, SEP, {}, std::round(5 * scale));
+        rect(m_tipBox.copy().expand(-1), TITLEBAR, {}, std::round(4 * scale));
+        tex(name, m_tipBox.middle(), {});
+      }
+    }
   }
 
-  bool onInputOnDeco(const eInputType type, const Vector2D &pos, std::any data) override {
-    if (!visible())
-      return false;
-    switch (type) {
-    case INPUT_TYPE_BUTTON: return onButton(pos, std::any_cast<const IPointer::SButtonEvent &>(data));
-    case INPUT_TYPE_AXIS: return onAxis(std::any_cast<const IPointer::SAxisEvent>(data));
-    case INPUT_TYPE_DRAG_END: return onDrop(std::any_cast<PHLWINDOW>(data));
-    default: return false;
-    }
+  CBox m_tipBox; // where the tooltip was last drawn, to clear it
+
+  // Presses and releases come through the button hook (see tabButton below),
+  // before the title bar sees them; scrolling through the axis event.
+  bool onInputOnDeco(const eInputType type, const Vector2D &pos, std::any) override {
+    return type == INPUT_TYPE_BUTTON && mode() == eMode::OwnBar && boxGlobal().containsPoint(pos);
   }
 
   static std::string labelFor(PHLWINDOW w) {
@@ -571,45 +919,14 @@ public:
     return g_labels[w.get()].text;
   }
 
-private:
-  PHLWINDOWREF m_window;
-  CBox m_assignedBox;
-  std::optional<bool> m_lastVisible;
-  SHit m_pressed;
-  uint32_t m_pressedButton = 0;
-
-  bool onButton(const Vector2D &pos, const IPointer::SButtonEvent &e) {
+  bool scroll(const IPointer::SAxisEvent &e) {
     const auto w = m_window.lock();
-    const auto h = hit(pos);
-    if (e.state == WL_POINTER_BUTTON_STATE_PRESSED) {
-      m_pressed = h;
-      m_pressedButton = e.button;
-      if (e.button == BTN_LEFT) {
-        if (h.kind == eHit::Tab)
-          select(w, h.index);
-        else if (h.kind == eHit::Plus)
-          newTab(w->m_group ? w->m_group->current() : w);
-      }
-      return true;
-    }
-    // Closing waits for the release over the same tab, like a button.
-    const bool same = h.kind == m_pressed.kind && h.index == m_pressed.index && e.button == m_pressedButton;
-    if (same && w && w->m_group) {
-      const bool close = (e.button == BTN_LEFT && h.kind == eHit::Close) || (e.button == BTN_MIDDLE && (h.kind == eHit::Tab || h.kind == eHit::Close));
-      if (close)
-        if (const auto target = w->m_group->fromIndex(h.index))
-          g_pXWaylandManager->sendCloseWindow(target);
-    }
-    m_pressed = {};
-    return true;
-  }
-
-  bool onAxis(const IPointer::SAxisEvent &e) {
-    const auto w = m_window.lock();
-    if (!w || !w->m_group)
-      return true;
-    auto &gs = g_groups[w->m_group.get()];
+    if (!w)
+      return false;
     const auto l = layout();
+    if (!l.area.containsPoint(g_pointer) && !l.plus.containsPoint(g_pointer))
+      return false;
+    auto &gs = g_groups[groupKey(w)];
     // Wheel notches are coarse; touchpads send small, smooth steps.
     const double step = e.deltaDiscrete != 0 ? e.delta * 4 : e.delta * 1.5;
     gs.scroll = std::clamp(gs.scroll + step, 0.0, l.maxScroll);
@@ -617,9 +934,10 @@ private:
     return true;
   }
 
-  // Dropping a window on the tab bar doesn't make it a tab: only Ctrl + T and
-  // "+" do, so a window carried past another never merges into it.
-  bool onDrop(PHLWINDOW) { return false; }
+private:
+  PHLWINDOWREF m_window;
+  CBox m_assignedBox;
+  std::optional<bool> m_lastOwn;
 
 public:
   static void select(PHLWINDOW anyMember, size_t index) {
@@ -637,6 +955,92 @@ public:
   static bool newTab(PHLWINDOW w);
   static void keepFrame(PHLWINDOW w, bool barShown);
 };
+
+// The tab bar under the pointer, if nothing is above it there: no other
+// window, popup, panel or menu.
+WP<CTabBar> barAt(const Vector2D &pos) {
+  const auto w = Desktop::viewState()->hitTest().windowAt(pos, Desktop::View::ALLOW_FLOATING | Desktop::View::RESERVED_EXTENTS | Desktop::View::INPUT_EXTENTS);
+  if (!w || !validMapped(w) || w->hasPopupAt(pos))
+    return {};
+  if (g_pSeatManager->m_seatGrab && !g_pSeatManager->m_seatGrab->accepts(w->resource()))
+    return {};
+  if (const auto mon = w->m_monitor.lock()) {
+    for (const auto layer : {ZWLR_LAYER_SHELL_V1_LAYER_TOP, ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY}) {
+      Vector2D coords;
+      PHLLS found;
+      Desktop::viewState()->hitTest().layerSurfaceAt(pos, &mon->m_layerSurfaceLayers[layer], &coords, &found);
+      if (found)
+        return {};
+    }
+  }
+  for (const auto &b : g_bars)
+    if (b && b->owner() == w && b->visible())
+      return b;
+  return {};
+}
+
+// A press the tab bar took, so its release is the tab bar's too.
+struct SPress {
+  WP<CTabBar> bar;
+  SHit hit;
+  uint32_t button = 0;
+};
+std::optional<SPress> g_press;
+
+// Every pointer button, before Hyprland (or the title bar) sees it. Returns
+// true when the tab bar takes it.
+bool tabButton(const IPointer::SButtonEvent &e) {
+  const auto pos = g_pInputManager->getMouseCoordsInternal();
+  // A click puts the tooltip away until the pointer comes back to the logo.
+  if (g_tipBar && e.state == WL_POINTER_BUTTON_STATE_PRESSED) {
+    if (g_tipShown)
+      g_tipBar->damageEntire();
+    g_tipShown = false;
+    if (g_tipTimer)
+      g_tipTimer->updateTimeout(std::nullopt);
+  }
+  if (e.state != WL_POINTER_BUTTON_STATE_PRESSED) {
+    if (!g_press || g_press->button != e.button)
+      return false;
+    const auto press = *g_press;
+    g_press.reset();
+    const auto bar = barAt(pos);
+    const auto w = bar ? bar->owner() : nullptr;
+    if (!w || bar != press.bar)
+      return true;
+    // Closing waits for the release over the same tab, like a button.
+    const auto h = bar->hit(pos);
+    if (h.kind != press.hit.kind || h.index != press.hit.index)
+      return true;
+    const bool close = (e.button == BTN_LEFT && h.kind == eHit::Close) || (e.button == BTN_MIDDLE && (h.kind == eHit::Tab || h.kind == eHit::Close));
+    if (close) {
+      const auto tabs = tabsOf(w);
+      if (h.index < tabs.size())
+        g_pXWaylandManager->sendCloseWindow(tabs[h.index]);
+    }
+    return true;
+  }
+
+  const auto bar = barAt(pos);
+  if (!bar)
+    return false;
+  const auto w = bar->owner();
+  const auto l = bar->layout();
+  const auto h = bar->hit(l, pos);
+  if (h.kind == eHit::None)
+    return false; // the logo and the empty title bar move the window, as ever
+  if (h.kind == eHit::Tab && e.button == BTN_LEFT) {
+    CTabBar::select(w, h.index);
+    // In the title bar, a tab is title bar too: the press goes on, so the
+    // window can still be dragged (and maximized) from it.
+    if (l.inTitleBar)
+      return false;
+  }
+  if (h.kind == eHit::Plus && e.button == BTN_LEFT)
+    CTabBar::newTab(w->m_group ? w->m_group->current() : w);
+  g_press = SPress{bar, h, e.button};
+  return true;
+}
 
 // ---------- No animations for tabs ----------
 //
@@ -883,10 +1287,7 @@ void refreshLabels() {
       continue;
     const auto w = b->owner();
     bool changed = false;
-    for (const auto &ref : w->m_group->windows()) {
-      const auto m = ref.lock();
-      if (!m)
-        continue;
+    for (const auto &m : tabsOf(w)) {
       const auto text = computeLabel(m);
       auto &label = g_labels[m.get()];
       if (label.text != text) {
@@ -922,28 +1323,41 @@ std::string tabsJson(eHyprCtlOutputFormat, std::string) {
     if (!b || !b->visible())
       continue;
     const auto w = b->owner();
-    if (w->m_group->current() != w)
+    if (w->m_group && w->m_group->current() != w)
       continue;
     const auto l = b->layout();
     std::string tabs;
-    const auto windows = w->m_group->windows();
+    const auto windows = tabsOf(w);
     for (size_t i = 0; i < windows.size(); ++i) {
-      const auto m = windows[i].lock();
-      if (!m)
-        continue;
+      const auto &m = windows[i];
       tabs += std::format("{}{{\"address\":\"0x{:x}\",\"label\":\"{}\",\"box\":{},\"close\":{}}}", tabs.empty() ? "" : ",",
                           reinterpret_cast<uintptr_t>(m.get()), jsonEscape(CTabBar::labelFor(m)), boxJson(CTabBar::tabBox(l, i)),
                           boxJson(CTabBar::closeBox(l, i)));
     }
-    out += std::format("{}{{\"window\":\"0x{:x}\",\"current\":{},\"bar\":{},\"area\":{},\"plus\":{},\"scroll\":{},\"maxScroll\":{},\"tabs\":[{}]}}",
-                       first ? "" : ",", reinterpret_cast<uintptr_t>(w.get()), l.current, boxJson(l.bar), boxJson(l.area), boxJson(l.plus),
-                       std::lround(l.scroll), std::lround(l.maxScroll), tabs);
+    out += std::format("{}{{\"window\":\"0x{:x}\",\"current\":{},\"titleBar\":{},\"bar\":{},\"strip\":{},\"logo\":{},\"logoLoaded\":{},\"tip\":\"{}\",\"area\":{},"
+                       "\"plus\":{},\"scroll\":{},\"maxScroll\":{},\"tabs\":[{}]}}",
+                       first ? "" : ",", reinterpret_cast<uintptr_t>(w.get()), l.current, l.inTitleBar, boxJson(l.bar), boxJson(l.strip), boxJson(l.logo),
+                       !appFor(w->m_class).iconPath.empty(), g_tipShown && g_tipBar.get() == b.get() ? jsonEscape(appFor(w->m_class).name) : "",
+                       boxJson(l.area), boxJson(l.plus), std::lround(l.scroll), std::lround(l.maxScroll), tabs);
     first = false;
   }
   return out + "]";
 }
 
-CHyprSignalListener g_openListener, g_closeListener, g_unmapListener;
+CHyprSignalListener g_openListener, g_closeListener, g_unmapListener, g_axisListener;
+
+// Pointer buttons reach Hyprland's event listeners, Omarchy's title bar
+// among them, all at once: the title bar would take a click on a tab's close
+// button or on "+" as a click on itself (a double click maximizing the
+// window). So the tab bar looks at each button first, from a hook on
+// CInputManager::onMouseButton, and keeps the presses it acts on.
+CFunctionHook *g_buttonHook = nullptr;
+using FOnMouseButton = void (*)(void *, IPointer::SButtonEvent, SP<IPointer>);
+void hkOnMouseButton(void *self, IPointer::SButtonEvent e, SP<IPointer> mouse) {
+  if (tabButton(e))
+    return;
+  reinterpret_cast<FOnMouseButton>(g_buttonHook->m_original)(self, e, mouse);
+}
 
 // For tests: what is animating or fading out right now.
 std::string animJson(eHyprCtlOutputFormat, std::string) {
@@ -986,9 +1400,27 @@ void init(HANDLE handle) {
       quietGroupOf(w, true);
   });
   g_closeListener = Event::bus()->m_events.window.destroy.listen([](PHLWINDOWREF w) {
-    if (const auto p = w.lock())
+    if (const auto p = w.lock()) {
       g_labels.erase(p.get());
+      g_alone.erase(p.get());
+      g_groups.erase(p.get());
+    }
   });
+  // The wheel or touchpad over the tabs scrolls them.
+  g_axisListener = Event::bus()->m_events.input.mouse.axis.listen([](IPointer::SAxisEvent e, Event::SCallbackInfo &info) {
+    if (const auto bar = barAt(g_pInputManager->getMouseCoordsInternal()); bar && bar->scroll(e))
+      info.cancelled = true;
+  });
+  for (const auto &match : HyprlandAPI::findFunctionsByName(handle, "onMouseButton"))
+    if (match.demangled.find("CInputManager::onMouseButton") != std::string::npos) {
+      g_buttonHook = HyprlandAPI::createFunctionHook(handle, match.address, reinterpret_cast<void *>(&hkOnMouseButton));
+      if (g_buttonHook && !g_buttonHook->hook())
+        g_buttonHook = nullptr;
+      break;
+    }
+  if (!g_buttonHook)
+    HyprlandAPI::addNotification(handle, "[windows-like] tabs: couldn't watch the mouse buttons; tab clicks may not work", CHyprColor{1.0, 0.6, 0.2, 1.0},
+                                 8000);
 
   for (const auto &w : Desktop::windowState()->windows())
     if (validMapped(w))
@@ -1005,6 +1437,21 @@ void init(HANDLE handle) {
 
   g_quietTimer = makeShared<CEventLoopTimer>(std::nullopt, [](SP<CEventLoopTimer>, void *) { onQuietTick(); }, nullptr);
   g_pEventLoopManager->addTimer(g_quietTimer);
+  g_tipTimer = makeShared<CEventLoopTimer>(
+      std::nullopt,
+      [](SP<CEventLoopTimer>, void *) {
+        if (g_tipBar && g_tipBar->visible() && g_tipBar->layout().logo.containsPoint(g_pointer)) {
+          g_tipShown = true;
+          g_tipBar->damageEntire();
+          // Damage again once drawn, now that the tooltip's box is known.
+          g_pEventLoopManager->doLater([] {
+            if (g_tipBar)
+              g_tipBar->damageEntire();
+          });
+        }
+      },
+      nullptr);
+  g_pEventLoopManager->addTimer(g_tipTimer);
   g_animCommand = HyprlandAPI::registerHyprCtlCommand(handle, SHyprCtlCommand{.name = "windowslike-anim", .exact = true, .fn = animJson});
 }
 
@@ -1019,6 +1466,13 @@ void exit() {
     g_pEventLoopManager->removeTimer(g_quietTimer);
     g_quietTimer.reset();
   }
+  if (g_tipTimer) {
+    g_tipTimer->cancel();
+    g_pEventLoopManager->removeTimer(g_tipTimer);
+    g_tipTimer.reset();
+  }
+  g_tipBar.reset();
+  g_tipShown = false;
   for (const auto &q : g_quiet)
     if (const auto w = q.window.lock(); w && q.setNoAnim)
       w->m_ruleApplicator->noAnim().unset(Desktop::Types::PRIORITY_SET_PROP);
@@ -1026,7 +1480,16 @@ void exit() {
   g_openListener.reset();
   g_unmapListener.reset();
   g_closeListener.reset();
+  g_axisListener.reset();
+  if (g_buttonHook) {
+    HyprlandAPI::removeFunctionHook(g_handle, g_buttonHook);
+    g_buttonHook = nullptr;
+  }
+  g_press.reset();
   g_bars.clear();
+  g_icons.clear();
+  g_apps.clear();
+  g_alone.clear();
   g_textures.clear();
   g_labels.clear();
   g_groups.clear();
@@ -1036,6 +1499,25 @@ void exit() {
 void onMouseMove(const Vector2D &pos) {
   const auto old = g_pointer;
   g_pointer = pos;
+  // The tooltip: the bar whose logo the pointer is on, if any.
+  WP<CTabBar> onLogo;
+  for (const auto &b : g_bars)
+    if (b && b->visible() && b->layout().logo.containsPoint(pos)) {
+      onLogo = b;
+      break;
+    }
+  if (onLogo != g_tipBar) {
+    // (Tab bars belong to their windows as unique pointers: weak ones to
+    // them are used as they are, never locked.)
+    if (g_tipBar && g_tipShown) {
+      g_tipBar->damageEntire();
+      g_tipBar->m_tipBox = {};
+    }
+    g_tipBar = onLogo;
+    g_tipShown = false;
+    if (g_tipTimer)
+      g_tipTimer->updateTimeout(onLogo ? std::optional{std::chrono::duration_cast<std::chrono::steady_clock::duration>(TIP_DELAY)} : std::nullopt);
+  }
   for (const auto &b : g_bars) {
     if (!b || !b->visible())
       continue;

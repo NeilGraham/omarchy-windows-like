@@ -93,14 +93,37 @@ with Nested(artifacts, extra_config=EXTRA, extra_env={'OMARCHY_WINDOWS_LIKE_NATI
   w1 = n.open_window(title=None, app_id='foot', cwd=str(project), command=None)
   n.ctl('dispatch', f'hl.dsp.focus({{ window = "address:{w1["address"]}" }})')
   time.sleep(.5)
-  assert tabs() == [], tabs()
-  print('PASS: a single window shows no tab bar', flush=True)
+  # Foot shows its tab from the start, in the title bar: the logo where the
+  # app's name was, the tab, "+", and the title bar's buttons left free.
+  bar = wait_for(lambda: tabs(), what='a tab in the title bar')[0]
+  assert bar['titleBar'], bar
+  assert len(bar['tabs']) == 1 and bar['current'] == 0, bar
+  BAR, BUTTONS = 30, 94
+  bx, by, bw, bh = bar['bar']
+  assert bh == BAR, bar
+  first = n.client(w1['address'])
+  assert by + bh == first['at'][1] and bx == first['at'][0], (bar, first)
+  assert bar['logo'][0] - bx < 10 and bar['logo'][0] + bar['logo'][2] <= bar['area'][0], bar
+  assert bar['logoLoaded'], 'foot\'s icon should be found'
+  assert bar['plus'][0] == bar['area'][0] + bar['area'][2], bar  # "+" right after the tab
+  assert bar['strip'][0] + bar['strip'][2] <= bx + bw - BUTTONS, bar
+  n.capture('tabs-one')
+  print('PASS: a single foot shows its logo, its tab and + in the title bar', flush=True)
+
+  # Resting on the logo names the app; moving off puts the name away.
+  lx, ly = center(bar['logo'])
+  n.pointer([f'move {lx} {ly}', 'wait 900'])
+  wait_for(lambda: tabs()[0]['tip'] == 'Foot', timeout=3, what='the app\'s name on the logo')
+  n.capture('tabs-tooltip')
+  n.pointer([f'move {lx} {ly + 200}', 'wait 200'])
+  wait_for(lambda: tabs()[0]['tip'] == '', timeout=3, what='the name to go')
+  print('PASS: resting on the logo shows the app\'s name', flush=True)
 
   # Ctrl + T: a second foot, in the same folder, as a new tab: without an
   # animation, and with the window's frame staying where it was.
   before = n.client(w1['address'])
   ctrl(n, 't')
-  busy = quiet_while(n, lambda: len(foot_windows()) == 2 and tabs())
+  busy = quiet_while(n, lambda: len(foot_windows()) == 2 and len(tabs()[0]['tabs']) == 2)
   bars = wait_for(lambda: tabs(), what='tab bar')
   bar = bars[0]
   assert len(bar['tabs']) == 2 and bar['current'] == 1, bar
@@ -111,11 +134,10 @@ with Nested(artifacts, extra_config=EXTRA, extra_env={'OMARCHY_WINDOWS_LIKE_NATI
   print('PASS: Ctrl+T opens a new tab in the same folder', flush=True)
   assert not busy, busy
   print('PASS: opening a tab doesn\'t animate', flush=True)
-  TAB = 28
   now = n.client(bar['window'])
-  assert now['at'] == [before['at'][0], before['at'][1] + TAB], (before['at'], now['at'])
-  assert now['size'] == [before['size'][0], before['size'][1] - TAB], (before['size'], now['size'])
-  print('PASS: the window\'s frame stays put as the tab bar appears', flush=True)
+  assert now['at'] == before['at'] and now['size'] == before['size'], (before, now)
+  assert bar['bar'][3] == BAR, bar
+  print('PASS: the window keeps its size: tabs take no room of their own', flush=True)
 
   # Terminal names follow what runs.
   n.key('sleep 300\n')
@@ -138,11 +160,20 @@ with Nested(artifacts, extra_config=EXTRA, extra_env={'OMARCHY_WINDOWS_LIKE_NATI
   wait_for(lambda: tabs()[0]['current'] == 0, what='click on tab 1')
   print('PASS: clicking a tab switches to it', flush=True)
 
-  # "+" opens a third tab.
-  click(*center(tabs()[0]['plus']))
-  wait_for(lambda: len(tabs()[0]['tabs']) == 3 and tabs()[0]['current'] == 2, what='third tab')
-  n.capture('tabs-three')
-  print('PASS: + opens a new tab', flush=True)
+  # "+" opens a third tab. Two quick clicks there (or on a tab's close
+  # button) are not a double click on the title bar: the window stays as it
+  # is, unmaximized and unmoved.
+  framed = n.client(tabs()[0]['window'])
+  px, py = center(tabs()[0]['plus'])
+  n.pointer([f'move {px} {py}', 'wait 150', 'down', 'wait 40', 'up', 'wait 120', 'down', 'wait 40', 'up', 'wait 400'])
+  wait_for(lambda: len(tabs()[0]['tabs']) == 4 and tabs()[0]['current'] == 3, what='two new tabs')
+  time.sleep(.5)
+  c = n.client(tabs()[0]['window'])
+  assert not c.get('fullscreen') and c['at'] == framed['at'] and c['size'] == framed['size'], (framed, c)
+  n.capture('tabs-four')
+  print('PASS: + opens a new tab, and a quick second click isn\'t a double click', flush=True)
+  ctrl(n, 'w')
+  wait_for(lambda: len(tabs()[0]['tabs']) == 3, what='back to three tabs')
 
   # Too many tabs to fit: the bar scrolls sideways.
   n.ctl('eval', 'hl.config({ plugin = { windows_like = { tab_min_width = 400 } } })')
@@ -171,23 +202,23 @@ with Nested(artifacts, extra_config=EXTRA, extra_env={'OMARCHY_WINDOWS_LIKE_NATI
   assert first['address'] not in [c['address'] for c in foot_windows()]
   print('PASS: a tab\'s close button closes it', flush=True)
 
-  # Middle click closes a tab; the bar goes away with the second-last tab.
+  # Middle click closes a tab; the last tab stays in the title bar.
   bar = tabs()[0]
   x, y = center(bar['tabs'][0]['box'])
   n.pointer([f'move {x} {y}', 'wait 150', 'mdown', 'wait 60'])
   n.pointer(['mup'])  # release separately, so the sampling below sees the close
-  busy = quiet_while(n, lambda: len(foot_windows()) == 1 and tabs() == [])
-  print('PASS: middle click closes a tab, and one tab shows no bar', flush=True)
+  busy = quiet_while(n, lambda: len(foot_windows()) == 1 and tabs() and len(tabs()[0]['tabs']) == 1)
+  print('PASS: middle click closes a tab, and the last tab stays', flush=True)
   assert not busy, busy
   print('PASS: closing a tab doesn\'t animate', flush=True)
   last = foot_windows()[0]
   assert last['at'] == before['at'] and last['size'] == before['size'], (before['at'], before['size'], last['at'], last['size'])
-  print('PASS: the window\'s frame stays put as the tab bar goes', flush=True)
+  print('PASS: the window\'s frame stays put as tabs close', flush=True)
 
   # A window dropped on a tabbed window (on its tab bar, or anywhere on it)
   # stays a window of its own: only Ctrl + T and "+" make tabs.
   ctrl(n, 't')
-  bar = wait_for(lambda: tabs(), what='tabs again')[0]
+  bar = wait_for(lambda: len(tabs()[0]['tabs']) == 2 and tabs(), what='tabs again')[0]
   stray = n.open_window(title='stray', app_id='stray-app')
   n.ctl('dispatch', f'hl.dsp.window.move({{ x = 20, y = 300, window = "address:{stray["address"]}" }})')
   time.sleep(.3)
@@ -203,7 +234,7 @@ with Nested(artifacts, extra_config=EXTRA, extra_env={'OMARCHY_WINDOWS_LIKE_NATI
   wait_for(lambda: not any(c['address'] == stray['address'] for c in n.clients()), what='stray to close')
   print('PASS: dropping a window on a tabbed window doesn\'t make it a tab', flush=True)
   ctrl(n, 'w')
-  wait_for(lambda: tabs() == [], what='back to one tab')
+  wait_for(lambda: len(tabs()[0]['tabs']) == 1, what='back to one tab')
 
   # Ctrl + W closes the last tab (the window).
   ctrl(n, 'w')
@@ -216,7 +247,7 @@ with Nested(artifacts, extra_config=EXTRA, extra_env={'OMARCHY_WINDOWS_LIKE_NATI
   n.ctl('dispatch', f'hl.dsp.focus({{ window = "address:{agent["address"]}" }})')
   time.sleep(.3)
   ctrl(n, 't')
-  bar = wait_for(lambda: tabs(), what='a tab from the agent terminal')[0]
+  bar = wait_for(lambda: tabs() and len(tabs()[0]['tabs']) == 2 and tabs(), what='a tab from the agent terminal')[0]
   assert len(bar['tabs']) == 2, bar
   joined = [c for c in n.clients() if c['address'] != agent['address']][0]
   assert joined['class'] == 'foot', joined  # a plain terminal, not another agent window
@@ -250,13 +281,13 @@ with Nested(artifacts, extra_config=EXTRA, extra_env={'OMARCHY_WINDOWS_LIKE_NATI
   assert not foot_windows() and len(n.clients()) == 1, n.clients()
   print('PASS: Ctrl+T reaches other apps untouched', flush=True)
 
-  # A window with tabs snaps with its title bar and tab bar inside the zone.
+  # A window with tabs snaps with its title bar (tabs and all) inside the zone.
   n.ctl('eval', 'hl.config({ plugin = { hyprbars = { workspace_tag = "omarchy-floating-workspace" } } })')
   w = n.open_window(title=None, app_id='foot', cwd=str(project), command=None)
   n.ctl('dispatch', f'hl.dsp.focus({{ window = "address:{w["address"]}" }})')
   time.sleep(.3)
   ctrl(n, 't')
-  wait_for(lambda: tabs(), what='tabs for snapping')
+  wait_for(lambda: tabs() and len(tabs()[0]['tabs']) == 2, what='tabs for snapping')
   for c in foot_windows():
     n.ctl('dispatch', f'hl.dsp.window.tag({{ tag = "+omarchy-floating-workspace", window = "address:{c["address"]}" }})')
   n.start_shell(HERE.parent / 'WindowsLike.qml')
@@ -264,7 +295,7 @@ with Nested(artifacts, extra_config=EXTRA, extra_env={'OMARCHY_WINDOWS_LIKE_NATI
   state = n.ipc('state')
   assert state['tabBarHeight'] == 28, state
   current = n.client(tabs()[0]['window'])
-  start = (current['at'][0] + 200, current['at'][1] - 28 - 15)  # on the title bar, above the tabs
+  start = center(tabs()[0]['tabs'][0]['box'])  # a tab is title bar too: dragging it moves the window
   n.drag(start, (0, n.height // 2))
   # The zone, computed as the shell plugin does: from the unrounded logical
   # size (the nested screen's scale can be fractional), rounding only edges.
@@ -273,8 +304,8 @@ with Nested(artifacts, extra_config=EXTRA, extra_env={'OMARCHY_WINDOWS_LIKE_NATI
   border, bar, tab, gaps_out, gaps_in = 2, 30, 28, 10, 5
   right = round(gaps_out + (width - 2 * gaps_out) / 2 - gaps_in)
   bottom = round(gaps_out + height - 2 * gaps_out)
-  want_at = [gaps_out + border, gaps_out + border + bar + tab]
-  want_size = [right - gaps_out - 2 * border, bottom - gaps_out - 2 * border - bar - tab]
+  want_at = [gaps_out + border, gaps_out + border + bar]
+  want_size = [right - gaps_out - 2 * border, bottom - gaps_out - 2 * border - bar]
   # The shell asks for exactly want_size; Hyprland gives a grouped window a
   # pixel more height than asked for, so allow that.
   def snapped():
@@ -283,5 +314,5 @@ with Nested(artifacts, extra_config=EXTRA, extra_env={'OMARCHY_WINDOWS_LIKE_NATI
     return c if ok else None
   wait_for(snapped, timeout=4, what=f'snap to {want_at} {want_size}, got {n.client(current["address"])["at"]} {n.client(current["address"])["size"]}')
   n.capture('tabs-snapped')
-  print('PASS: a window with tabs snaps to the left half, tab bar included', flush=True)
+  print('PASS: dragging a tab moves the window, which snaps to the left half', flush=True)
   print('ALL PASS', flush=True)

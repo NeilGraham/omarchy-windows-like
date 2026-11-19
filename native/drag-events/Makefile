@@ -1,5 +1,5 @@
 CXX ?= g++
-PKGS = hyprland libdrm libinput libudev pixman-1 wayland-server xkbcommon
+PKGS = hyprland hyprgraphics libdrm libinput libudev pixman-1 wayland-server xkbcommon
 CXXFLAGS ?= -O2
 CXXFLAGS += -std=c++2b -shared -fPIC -fno-gnu-unique $(shell pkg-config --cflags $(PKGS))
 LDLIBS = $(shell pkg-config --libs $(PKGS))

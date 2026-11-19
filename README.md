@@ -64,15 +64,19 @@ direction only (Hyprland on its own always resizes from the nearest corner),
 corners resize both ways, and the top edge above the title bar shows a resize
 cursor and resizes the top, just like the other three sides.
 
-**Tabs for any window** (Mac Terminal style): a window gets a tab bar under its
-title bar as soon as it has a second tab, and loses it again at one. Each tab
-has a ✕ (on the active tab, and on any tab you hover), the **+** at the right
-opens another window of the same app as a new tab, middle-click closes a tab,
-and when tabs no longer fit the bar scrolls sideways with the wheel or
-touchpad. Opening and closing tabs is instant, like switching them (no
-window animations), and the window's frame stays put as the tab bar appears
-or goes: the bar takes its room from the content. Tabs are Hyprland groups underneath, so Omarchy's group shortcuts
-(Super + G, Super + Alt + 1–5…) work on them too.
+**Tabs for any window** (Mac Terminal style), in the title bar: the app's logo
+sits where its name was (rest the pointer on it for the name), then the tabs, then a **+** that opens another
+window of the same app as a new tab, with the minimize, maximize and close
+buttons left where they are at the right. foot shows its tab from the start;
+other apps once they have a second tab. Each tab has a ✕ (on the active tab,
+and on any tab you hover), middle-click closes a tab, dragging a tab (or the
+logo, or the empty title bar) moves the window, and when tabs no longer fit
+they scroll sideways with the wheel or touchpad. Opening and closing tabs is
+instant, like switching them (no window animations), and takes no room from
+the window. A window without a title bar (a tiled one) gets a tab bar of its
+own under its border once it has a second tab. Tabs are Hyprland groups
+underneath, so Omarchy's group shortcuts (Super + G, Super + Alt + 1–5…) work
+on them too.
 
 In **foot**, Mac Terminal's shortcuts work with Ctrl in place of Cmd:
 
@@ -146,12 +150,14 @@ Two parts, each kept as small as possible:
 - **`native/drag-events/`** — a small Hyprland plugin. Hyprland has no
   event for "a window is being dragged", and Omarchy's title bars swallow the
   mouse button, so nothing outside the compositor can see a title-bar drag.
-  The plugin watches Hyprland's drag controller (it hooks nothing and changes
-  no input) and reports `start` / `move` / `end` with the pointer and window
+  The plugin watches Hyprland's drag controller (for dragging it hooks
+  nothing and changes no input) and reports `start` / `move` / `end` with the pointer and window
   position as `custom` IPC events. It also restarts border resizes on the
   side that was pressed and sets the border cursor from the whole window,
-  title bar included; it never cancels or redirects a click. And it draws the
-  tab bar for grouped windows (`tabs.cpp`), in place of Hyprland's group bar.
+  title bar included. And it draws tabs in the title bar (`tabs.cpp`), in
+  place of Hyprland's group bar: the one place it takes input, from a hook on
+  Hyprland's mouse button handler, so a click on a tab's ✕ or on **+** goes to
+  the tab and not to the title bar under it.
 - **`WindowsLike.qml`** — an Omarchy shell plugin (Quickshell) that listens for
   those events, draws the preview and the layout picker, and places windows
   with `hyprctl eval`. Gaps, border size and title bar height are read from

@@ -75,8 +75,9 @@ hl.config({
   group = { auto_group = false, drag_into_group = 0, insert_after_current = false, groupbar = { enabled = false } },
 })
 
--- The tab bar follows the Omarchy theme: the active tab takes the title bar's
--- color so the two read as one, inactive tabs sit darker.
+-- The tabs follow the Omarchy theme. They sit in the title bar (in its
+-- color, laid over its title), and the active tab takes the window's own
+-- background so it reads as one with the content under it.
 local function theme_colors()
   local colors = {}
   local theme = io.open(home .. "/.local/state/omarchy/current/theme/colors.toml", "r")
@@ -101,19 +102,23 @@ if hl.plugin.windows_like then
   if not titlebar or titlebar == c.background then
     titlebar = c.selection
   end
+  local foreground = c.foreground or "f5f5f7"
   hl.config({
     plugin = {
       windows_like = {
         tab_height = 28,
         tab_font = "monospace",
         tab_font_size = 12,
-        ["col.active"] = "rgb(" .. (titlebar or "2c2c2e") .. ")",
-        ["col.bar"] = rgb("dark_background", "161618"),
-        ["col.hover"] = rgb("background", "1c1c1e"),
-        ["col.text"] = rgb("foreground", "f5f5f7"),
+        -- Omarchy's title bar buttons (−, □, ×): 20 px each, 8 px apart, 10 px in.
+        tab_buttons_width = 94,
+        ["col.titlebar"] = "rgb(" .. (titlebar or "2c2c2e") .. ")",
+        ["col.bar"] = "rgb(" .. (titlebar or "2c2c2e") .. ")",
+        ["col.active"] = rgb("background", "1c1c1e"),
+        ["col.hover"] = "rgba(" .. foreground .. "14)",
+        ["col.text"] = "rgb(" .. foreground .. ")",
         ["col.text_inactive"] = rgb("dark_foreground", "98989d"),
         ["col.separator"] = rgb("selection", "3a3a3c"),
-        ["col.button_hover"] = rgb("selection", "3a3a3c"),
+        ["col.button_hover"] = "rgba(" .. foreground .. "26)",
         tabs = setting("tabs.enabled", true) and 1 or 0,
         terminal_names = setting("tabs.terminalNames", true) and 1 or 0,
         side_resize = setting("resizing.sides", true) and 1 or 0,

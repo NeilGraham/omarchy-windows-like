@@ -72,7 +72,8 @@ Item {
     property int gapsIn: 5
     property int barHeight: 30
     property bool hasTitleBars: false
-    // The tab bar the native plugin draws under the title bar of a window with tabs.
+    // The tab bar the native plugin draws on a window with tabs but no title bar
+    // (with a title bar, the tabs sit in it).
     property int tabBarHeight: 0
     readonly property int innerGap: 2 * gapsIn
     // Omarchy's title bars draw on windows with this tag only.
@@ -257,18 +258,16 @@ Item {
         return null;
     }
 
-    // Everything drawn above a window's content: Omarchy's title bar, and the
-    // tab bar when the window has tabs.
+    // Everything drawn above a window's content: Omarchy's title bar (tabs sit
+    // inside it), or, for a window with tabs but no title bar, the tab bar.
     function titleBarFor(client) {
         if (!client)
             return 0;
-        var height = client.grouped && client.grouped.length > 1 ? root.tabBarHeight : 0;
-        if (!root.hasTitleBars || !client.tags)
-            return height;
-        for (var i = 0; i < client.tags.length; i++)
-            if (String(client.tags[i]).replace(/\*$/, "") === root.floatingTag)
-                return height + root.barHeight;
-        return height;
+        if (root.hasTitleBars && client.tags)
+            for (var i = 0; i < client.tags.length; i++)
+                if (String(client.tags[i]).replace(/\*$/, "") === root.floatingTag)
+                    return root.barHeight;
+        return client.grouped && client.grouped.length > 1 ? root.tabBarHeight : 0;
     }
 
     function validAddress(a) {
