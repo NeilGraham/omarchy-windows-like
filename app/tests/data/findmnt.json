@@ -1,0 +1,40 @@
+{
+ "filesystems": [
+  {
+   "target": "/mnt/games",
+   "source": "//192.168.1.10/games",
+   "fstype": "cifs",
+   "size": 1000,
+   "used": 950,
+   "avail": 50
+  },
+  {
+   "target": "/mnt/media",
+   "source": "nas:/export/media",
+   "fstype": "nfs4",
+   "size": 0,
+   "used": 0,
+   "avail": 0
+  },
+  {
+   "target": "/home/me/remote",
+   "source": "me@box:/srv/files",
+   "fstype": "fuse.sshfs",
+   "size": 100,
+   "used": 10,
+   "avail": 90
+  },
+  {
+   "target": "/run/user/1000/gvfs",
+   "source": "gvfsd-fuse",
+   "fstype": "fuse.gvfsd-fuse",
+   "size": 0
+  },
+  {
+   "target": "/data",
+   "source": "/dev/sdb1",
+   "fstype": "ext4",
+   "size": 100
+  }
+ ]
+}

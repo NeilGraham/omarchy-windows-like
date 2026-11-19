@@ -215,20 +215,25 @@ with Nested(artifacts, extra_config=EXTRA, extra_env={'OMARCHY_WINDOWS_LIKE_NATI
   assert last['at'] == before['at'] and last['size'] == before['size'], (before['at'], before['size'], last['at'], last['size'])
   print('PASS: the window\'s frame stays put as tabs close', flush=True)
 
-  # A window dropped on a tabbed window (on its tab bar, or anywhere on it)
-  # stays a window of its own: only Ctrl + T and "+" make tabs.
+  # A window dragged by its title bar and dropped on a tabbed window (on its
+  # tab bar, or anywhere on it) stays a window of its own, as does one dragged
+  # by its tab and dropped on the window rather than its tabs: joining tabs
+  # takes dropping a tab on them (see test_tab_drag.py).
   ctrl(n, 't')
   bar = wait_for(lambda: len(tabs()[0]['tabs']) == 2 and tabs(), what='tabs again')[0]
   stray = n.open_window(title='stray', app_id='stray-app')
   n.ctl('dispatch', f'hl.dsp.window.move({{ x = 20, y = 300, window = "address:{stray["address"]}" }})')
   time.sleep(.3)
   stray = n.client(stray['address'])
-  for target in (center(bar['tabs'][0]['box']), center(bar['area'])[0:1] + (bar['bar'][1] + 120,)):
+  on_tabs, on_window = center(bar['tabs'][0]['box']), center(bar['area'])[0:1] + (bar['bar'][1] + 120,)
+  # (The stray is a foot, so it shows its tab: the logo is its title bar.)
+  for by, target in (('logo', on_tabs), ('logo', on_window), ('tab', on_window)):
     s0 = n.client(stray['address'])
-    grab = (s0['at'][0] + 100, s0['at'][1] - 15)
+    grab = (s0['at'][0] + 19, s0['at'][1] - 15) if by == 'logo' else (s0['at'][0] + 100, s0['at'][1] - 15)
     n.drag(grab, target)
     time.sleep(.3)
-    assert not n.client(stray['address'])['grouped'], ('dropped window joined the tabs', target)
+    assert not n.client(stray['address'])['grouped'], ('dropped window joined the tabs', by, target)
+    assert n.client(stray['address'])['at'] != s0['at'], ('the window didn\'t move', by)
   assert len(tabs()[0]['tabs']) == 2, tabs()
   n.ctl('dispatch', f'hl.dsp.window.close({{ window = "address:{stray["address"]}" }})')
   wait_for(lambda: not any(c['address'] == stray['address'] for c in n.clients()), what='stray to close')
@@ -295,7 +300,7 @@ with Nested(artifacts, extra_config=EXTRA, extra_env={'OMARCHY_WINDOWS_LIKE_NATI
   state = n.ipc('state')
   assert state['tabBarHeight'] == 28, state
   current = n.client(tabs()[0]['window'])
-  start = center(tabs()[0]['tabs'][0]['box'])  # a tab is title bar too: dragging it moves the window
+  start = center(tabs()[0]['logo'])  # the logo is title bar: dragging it moves the window, tabs and all
   n.drag(start, (0, n.height // 2))
   # The zone, computed as the shell plugin does: from the unrounded logical
   # size (the nested screen's scale can be fractional), rounding only edges.
@@ -314,5 +319,22 @@ with Nested(artifacts, extra_config=EXTRA, extra_env={'OMARCHY_WINDOWS_LIKE_NATI
     return c if ok else None
   wait_for(snapped, timeout=4, what=f'snap to {want_at} {want_size}, got {n.client(current["address"])["at"]} {n.client(current["address"])["size"]}')
   n.capture('tabs-snapped')
-  print('PASS: dragging a tab moves the window, which snaps to the left half', flush=True)
+  print('PASS: dragging the logo moves the tabbed window, which snaps to the left half', flush=True)
+
+  # A tab dragged out of the strip tears off into a window of its own, which
+  # snaps like any dragged window: into the room right of the tabbed one.
+  group = tabs()[0]
+  torn = next(t['address'] for t in group['tabs'] if t['address'] != current['address'])
+  start = center(next(t['box'] for t in group['tabs'] if t['address'] == torn))
+  n.drag(start, (start[0], start[1] + 150), (round(width) - 1, n.height // 2))
+  edge = round(width) - gaps_out - border
+  def snapped_right():
+    c = n.client(torn)
+    ok = (not c['grouped'] and c['at'][1] == want_at[1] and abs(c['at'][0] + c['size'][0] - edge) <= 1
+          and c['at'][0] > width / 2 - 20 and abs(c['size'][1] - want_size[1]) <= 1)
+    return c if ok else None
+  wait_for(snapped_right, timeout=4, what=f'the torn-off tab to snap right, got {n.client(torn)["at"]} {n.client(torn)["size"]}')
+  assert snapped(), n.client(current['address'])
+  n.capture('tabs-torn-off-snapped')
+  print('PASS: a tab torn off by dragging snaps to the right half', flush=True)
   print('ALL PASS', flush=True)

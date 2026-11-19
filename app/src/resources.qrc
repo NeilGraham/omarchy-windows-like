@@ -1,8 +1,24 @@
 <RCC>
     <qresource prefix="/">
         <file alias="Main.qml">Main.qml</file>
+        <file alias="DisplayPage.qml">DisplayPage.qml</file>
+        <file alias="Icon.qml">Icon.qml</file>
+        <file alias="Icons.js">Icons.js</file>
+        <file alias="LinkCard.qml">LinkCard.qml</file>
+        <file alias="NavItem.qml">NavItem.qml</file>
+        <file alias="PackagePage.qml">PackagePage.qml</file>
+        <file alias="PinnedList.qml">PinnedList.qml</file>
+        <file alias="SectionHeader.qml">SectionHeader.qml</file>
+        <file alias="SettingChoice.qml">SettingChoice.qml</file>
+        <file alias="SettingSlider.qml">SettingSlider.qml</file>
         <file alias="SettingSwitch.qml">SettingSwitch.qml</file>
+        <file alias="SettingsCard.qml">SettingsCard.qml</file>
         <file alias="SettingsPage.qml">SettingsPage.qml</file>
+        <file alias="SnappingPage.qml">SnappingPage.qml</file>
+        <file alias="TaskbarPage.qml">TaskbarPage.qml</file>
+        <file alias="ThisPC.qml">ThisPC.qml</file>
+        <file alias="Tile.qml">Tile.qml</file>
+        <file alias="WindowsPage.qml">WindowsPage.qml</file>
         <file alias="i18n/en.json">i18n/en.json</file>
     </qresource>
 </RCC>

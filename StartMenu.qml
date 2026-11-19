@@ -40,19 +40,91 @@ KeyboardPanel {
   property int selected: 0
   property bool powerOpen: false
 
-  // The menu is created already open (the taskbar loads it on first use), so
-  // the first opening runs this from Component.onCompleted.
+  // The taskbar makes the menu when the shell starts and keeps it, so opening
+  // it builds nothing: this only resets what the last opening left.
   function prepare() {
     query = ""
     search.text = ""
+    pageMotion = false
     page = view === "all" || classic ? "all" : "home"
+    pageMotion = true
     selected = 0
     powerOpen = false
     pinTarget = null
     installedProc.running = true
   }
-  onOpenChanged: if (open) prepare()
-  Component.onCompleted: if (open) prepare()
+  onOpenChanged: {
+    if (open)
+      prepare()
+    slideOnOpen()
+  }
+  Component.onCompleted: {
+    moveWithSlide()
+    installedProc.running = true
+    if (open)
+      prepare()
+  }
+
+  // ---------- Motion ----------
+
+  // Start slides up from the taskbar (down from a bar at the top) as it fades
+  // in, as on Windows 11, and goes back quicker than it came. Only a
+  // transform on the window's content moves, so nothing is laid out again,
+  // and the slide starts once the surface is on screen, so none of its frames
+  // go to mapping it. Durations go through Style.duration, which Omarchy's
+  // "animations off" makes 0; animations.enabled turns the slide off.
+  readonly property bool animated: !settings || settings.get("animations.enabled", true)
+  readonly property real slideDistance: animated ? Style.space(48) * (barPos === "top" ? -1 : 1) : 0
+  // 1 while away (below the bar), 0 in place.
+  property real slide: 0
+
+  property NumberAnimation slideIn: NumberAnimation {
+    id: slideIn
+    target: root
+    property: "slide"
+    to: 0
+    duration: Style.duration(250)
+    easing.type: Easing.Bezier
+    // Windows' "decelerate" curve.
+    easing.bezierCurve: [0.1, 0.9, 0.2, 1, 1, 1]
+  }
+  property NumberAnimation slideOut: NumberAnimation {
+    id: slideOut
+    target: root
+    property: "slide"
+    to: 1
+    // Done before the panel's own 120 ms fade-out unmaps it.
+    duration: Style.duration(110)
+    easing.type: Easing.InCubic
+  }
+
+  function slideOnOpen() {
+    slideIn.stop()
+    slideOut.stop()
+    if (!open)
+      slideOut.start()
+    else if (backingWindowVisible)
+      slideIn.start()
+    else
+      slide = 1
+  }
+  onBackingWindowVisibleChanged: if (backingWindowVisible && open && !slideIn.running) slideIn.start()
+
+  property Translate slideShift: Translate {
+    y: root.slide * root.slideDistance
+  }
+  // The window's own content item: the top of the card's parents.
+  function moveWithSlide() {
+    var top = card
+    while (top.parent)
+      top = top.parent
+    top.transform = [root.slideShift]
+  }
+  Component.onDestruction: slideIn.stop()
+
+  // Home and All apps slide across and cross-fade as they swap; not when
+  // opening resets the page.
+  property bool pageMotion: true
 
   // Never taller than the room above (or below) the bar.
   readonly property int roomOnScreen: screen ? screen.height - (bar ? bar.barSize : 0) - 4 * Style.gapsOut : 900
@@ -88,47 +160,51 @@ KeyboardPanel {
     return String(e.name).toLowerCase().indexOf(query.toLowerCase()) >= 0
   })).slice(0, 9)
 
-  readonly property var pinnedApps: ((settings ? settings.get("start.pinned", []) : []) || []).map(function(id) {
-    return DesktopEntries.byId(id)
-  }).filter(function(e) {
-    return !!e
-  })
+  // DesktopEntries.byId() is no binding dependency, and a rescan (any
+  // .desktop file changing) replaces the object of an id that is in more than
+  // one data dir (foot: ~/.local/share and /usr/share), leaving a held one
+  // null. Reading applications.values looks the ids up again after each.
+  readonly property var pinnedApps: {
+    var revision = DesktopEntries.applications.values
+    return ((settings ? settings.get("start.pinned", []) : []) || []).map(function(id) {
+      return DesktopEntries.byId(id)
+    }).filter(function(e) {
+      return !!e
+    })
+  }
 
-  readonly property var allRows: open ? Model.withLetterHeaders(allApps(), nameOf) : []
+  readonly property var allRows: Model.withLetterHeaders(allApps(), nameOf)
 
   property var installed: []
   property Process installedProc: Process {
     id: installedProc
     command: ["sh", "-c", "find /usr/share/applications \"$HOME/.local/share/applications\" -maxdepth 1 -name '*.desktop' -printf '%C@ %f\\n' 2>/dev/null | sort -rn | head -60"]
     stdout: StdioCollector {
-      onStreamFinished: root.installed = Model.recentlyInstalled(text, root.allApps().map(function(e) {
-        return e.id
-      }), 6)
+      // Plenty: Recommended skips apps pinned to Start, and the next fill in.
+      // Set only when it changed, so Recommended isn't rebuilt as Start opens.
+      onStreamFinished: {
+        var next = Model.recentlyInstalled(text, root.allApps().map(function(e) {
+          return e.id
+        }), 20)
+        if (JSON.stringify(next) !== JSON.stringify(root.installed))
+          root.installed = next
+      }
     }
   }
 
+  // At most 8; the grid shows as many rows of them as fit.
   readonly property var recommended: {
-    var out = []
-    var seen = {}
-    function add(id, why) {
-      var entry = DesktopEntries.byId(id)
-      if (entry && !entry.noDisplay && !seen[entry.id] && out.length < 8) {
-        seen[entry.id] = true
-        out.push({ entry: entry, why: why })
-      }
-    }
+    var revision = DesktopEntries.applications.values
     var recent = settings ? settings.get("start.showRecent", true) : true
     var fresh = settings ? settings.get("start.showRecentlyInstalled", true) : true
-    // Alternate, so both kinds show when there are plenty of each.
-    var r = recent ? (root.recents || []) : []
-    var n = fresh ? root.installed : []
-    for (var i = 0; i < Math.max(r.length, n.length); i++) {
-      if (i < n.length)
-        add(n[i], "Recently installed")
-      if (i < r.length)
-        add(r[i], "Recently used")
-    }
-    return out
+    var pinned = (settings ? settings.get("start.pinned", []) : []) || []
+    var rows = Model.recommendations(fresh ? root.installed : [], recent ? (root.recents || []) : [], pinned, function(id) {
+      var entry = DesktopEntries.byId(id)
+      return entry && !entry.noDisplay ? String(entry.id) : ""
+    }, 8)
+    return rows.map(function(r) {
+      return { entry: DesktopEntries.byId(r.id), why: r.why === "installed" ? "Recently installed" : "Recently used" }
+    })
   }
 
   // ---------- Actions ----------
@@ -296,6 +372,13 @@ KeyboardPanel {
     clip: true
     model: root.allRows
     boundsBehavior: Flickable.StopAtBounds
+    Connections {
+      target: root
+      function onOpenChanged() {
+        if (root.open)
+          list.positionViewAtBeginning()
+      }
+    }
     delegate: Item {
       id: row
       required property var modelData
@@ -416,10 +499,23 @@ KeyboardPanel {
       anchors.bottom: footer.top
       anchors.bottomMargin: Style.space(10)
       width: parent.width
+      clip: true
 
       // Pinned, then Recommended
       Column {
-        visible: root.page === "home"
+        id: homePage
+        visible: opacity > 0
+        opacity: root.page === "home" ? 1 : 0
+        Behavior on opacity {
+          enabled: root.pageMotion
+          NumberAnimation {
+            duration: Style.duration(root.animated ? 200 : 0)
+            easing.type: Easing.OutCubic
+          }
+        }
+        transform: Translate {
+          x: (1 - homePage.opacity) * -Style.space(40)
+        }
         width: parent.width
         spacing: Style.space(6)
 
@@ -467,12 +563,15 @@ KeyboardPanel {
           id: recGrid
           columns: 2
           width: parent.width
+          // Whole rows only, in the room left above the footer.
+          readonly property int rowHeight: Style.space(52)
+          readonly property int room: Math.max(0, Math.floor((home.height - y) / rowHeight)) * columns
           Repeater {
-            model: root.recommended
+            model: root.recommended.slice(0, recGrid.room)
             AppTile {
               required property var modelData
               width: recGrid.width / 2
-              height: Style.space(52)
+              height: recGrid.rowHeight
               wide: true
               entry: modelData.entry
               subtitle: modelData.why
@@ -484,7 +583,19 @@ KeyboardPanel {
 
       // All apps
       Item {
-        visible: root.page === "all"
+        id: allPage
+        visible: opacity > 0
+        opacity: root.page === "all" ? 1 : 0
+        Behavior on opacity {
+          enabled: root.pageMotion
+          NumberAnimation {
+            duration: Style.duration(root.animated ? 200 : 0)
+            easing.type: Easing.OutCubic
+          }
+        }
+        transform: Translate {
+          x: (1 - allPage.opacity) * Style.space(40)
+        }
         anchors.fill: parent
         SectionTitle {
           id: allTitle
@@ -555,7 +666,7 @@ KeyboardPanel {
       Repeater {
         model: [
           { icon: "system-users", tip: Quickshell.env("USER") || "You", act: "" },
-          { icon: "preferences-system", tip: "Windows-like Settings", act: "settings" },
+          { icon: "preferences-system", tip: "Settings", act: "settings" },
           { icon: "system-shutdown", tip: "Power", act: "power" }
         ]
         Rectangle {

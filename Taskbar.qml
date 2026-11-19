@@ -70,9 +70,14 @@ BarWidget {
     return Quickshell.iconPath(name, "application-x-executable")
   }
 
-  readonly property var pinned: (cfg.get("taskbar.pinned", []) || []).filter(function(id) {
-    return !!DesktopEntries.byId(id)
-  })
+  // Looked up again when the desktop entries change (byId() is no binding
+  // dependency), so an app installed after the shell started shows its pin.
+  readonly property var pinned: {
+    var revision = DesktopEntries.applications.values
+    return (cfg.get("taskbar.pinned", []) || []).filter(function(id) {
+      return !!DesktopEntries.byId(id)
+    })
+  }
 
   readonly property var items: {
     if (root.part !== "apps")
@@ -99,6 +104,167 @@ BarWidget {
     }
     return Model.buildItems(root.pinned, windows, root.workspaceId)
   }
+
+  // ---------- Order (drag a button to move it) ----------
+
+  // The order buttons were dragged into. Pins also save theirs
+  // (taskbar.pinned); running apps that aren't pinned keep theirs until the
+  // shell restarts, as on Windows.
+  property var order: []
+  readonly property var arranged: Model.arrange(root.items, root.order)
+  // What the buttons show: held still while a button is dragged, so a window
+  // changing its title doesn't rebuild the row under the pointer.
+  property var shownItems: []
+  onArrangedChanged: if (root.dragFrom < 0) root.shownItems = root.arranged
+
+  property int dragFrom: -1
+  property int dragTo: -1
+  property real dragDx: 0
+  property real dragRoom: 0
+
+  function beginDrag(index) {
+    var held = appsRepeater.itemAt(index)
+    if (!held)
+      return
+    root.dragRoom = held.width + appsRow.spacing
+    root.dragDx = 0
+    root.dragTo = index
+    root.dragFrom = index
+  }
+
+  function moveDrag(dx) {
+    var centers = []
+    for (var i = 0; i < appsRepeater.count; i++) {
+      var b = appsRepeater.itemAt(i)
+      centers.push(b ? b.x + b.width / 2 : 0)
+    }
+    root.dragDx = dx
+    root.dragTo = Model.dropIndex(centers, root.dragFrom, centers[root.dragFrom] + dx)
+  }
+
+  function endDrag(commit) {
+    var from = root.dragFrom
+    var to = root.dragTo
+    var keys = root.shownItems.map(function(item) {
+      return item.key
+    })
+    root.dragFrom = -1
+    root.dragTo = -1
+    root.dragDx = 0
+    if (commit && from >= 0 && to >= 0 && to !== from) {
+      var next = Model.move(keys, from, to)
+      var saved = cfg.get("taskbar.pinned", []) || []
+      var pins = Model.reorderPinned(saved, next)
+      if (JSON.stringify(pins) !== JSON.stringify(saved))
+        cfg.set("taskbar.pinned", pins)
+      root.order = next
+    }
+    root.shownItems = root.arranged
+  }
+
+  // ---------- Room on the bar ----------
+
+  // The bar's holder for this widget and the slot showing it; the bar hands
+  // widgets no API for either, so they're found by their properties.
+  property Item widgetHost: null
+  readonly property Item barSlot: widgetHost && widgetHost.owner ? widgetHost.owner : null
+
+  function findWidgetHost() {
+    for (var p = root.parent; p; p = p.parent)
+      if ("owner" in p && "activeItem" in p && "pool" in p)
+        return p
+    return null
+  }
+
+  // Omarchy's bar lays a pointer area over each widget that takes its left
+  // presses (to drag the widget along the bar) and passes on only clicks.
+  // The app buttons need the press to be dragged themselves, so the apps
+  // widget's room in its slot is raised above that area.
+  readonly property Item raisedRoom: part === "apps" && barSlot && barSlot.widgetRoom ? barSlot.widgetRoom : null
+  property Item lastRaised: null
+  onRaisedRoomChanged: {
+    if (root.lastRaised)
+      root.lastRaised.z = 0
+    if (root.raisedRoom)
+      root.raisedRoom.z = 1
+    root.lastRaised = root.raisedRoom
+  }
+
+  Component.onCompleted: {
+    root.widgetHost = root.findWidgetHost()
+    root.shownItems = root.arranged
+  }
+  Component.onDestruction: if (root.lastRaised) root.lastRaised.z = 0
+
+  // A section of the bar ("left", "right") the slot's bar surface holds.
+  function barList(region) {
+    for (var p = root.barSlot; p; p = p.parent) {
+      var kids = p.children
+      for (var i = 0; i < kids.length; i++)
+        if (kids[i] && kids[i].region === region && "keys" in kids[i])
+          return kids[i]
+    }
+    return null
+  }
+  readonly property Item leftList: barSlot ? barList("left") : null
+  readonly property Item rightList: barSlot ? barList("right") : null
+
+  // How wide the buttons may grow before they reach the bar's right section:
+  // in the middle, the center stays centered, so the nearer side limits it;
+  // on the left (classic), the right section does.
+  readonly property real appsRoom: {
+    if (part !== "apps" || vertical || !barSlot || !rightList || !rightList.parent)
+      return Infinity
+    var surface = rightList.parent
+    var gap = Style.space(12)
+    if (barSlot.region === "center") {
+      var leftEnd = leftList ? leftList.x + leftList.width : 0
+      var half = Math.min(surface.width / 2 - leftEnd, rightList.x - surface.width / 2) - gap
+      // The rest of the center (Start) shares it.
+      var row = barSlot.parent
+      var others = 0
+      var kids = row ? row.children : []
+      for (var i = 0; i < kids.length; i++)
+        if (kids[i] !== barSlot && kids[i].visible && "widgetKey" in kids[i] && kids[i].implicitWidth > 0)
+          others += kids[i].implicitWidth + (row.spacing || 0)
+      return Math.max(0, 2 * half - others)
+    }
+    if (barSlot.region === "left") {
+      // Read so the binding re-runs as the slot moves; mapToItem() isn't.
+      var moved = barSlot.x + leftList.x
+      return Math.max(0, rightList.x - gap - barSlot.mapToItem(surface, 0, 0).x)
+    }
+    return Infinity
+  }
+
+  FontMetrics {
+    id: labelMetrics
+    font.family: Style.font.family
+    font.pixelSize: Style.font.body
+  }
+
+  function labelFor(item) {
+    if (item.windows.length > 0)
+      return String(item.windows[0].title || "")
+    var entry = DesktopEntries.byId(item.key)
+    return entry ? entry.name : item.key
+  }
+
+  readonly property bool labeled: cfg.get("taskbar.showLabels", false)
+
+  function buttonWidth(item) {
+    if (!root.labeled)
+      return root.slot
+    return Math.min(root.slot * 5, Math.ceil(root.slot * 1.4 + labelMetrics.advanceWidth(root.labelFor(item))))
+  }
+
+  // The buttons that fit; the rest wait behind an overflow button, as on
+  // Windows 11.
+  readonly property int fitted: Model.fitCount(root.shownItems.map(root.buttonWidth), appsRow.spacing, root.appsRoom, root.slot)
+  readonly property var rowItems: root.shownItems.slice(0, root.fitted)
+  readonly property var overflowItems: root.shownItems.slice(root.fitted)
+  property bool overflowOpen: false
+  onOverflowItemsChanged: if (root.overflowItems.length === 0) root.overflowOpen = false
 
   function run(lua) {
     Quickshell.execDetached(["hyprctl", "eval", lua])
@@ -252,8 +418,10 @@ BarWidget {
     }
   }
 
+  // Made with the shell and kept, so opening Start builds nothing and its
+  // animation has every frame.
   Loader {
-    active: root.part === "start" && (root.menuOpen || item !== null)
+    active: root.part === "start"
     sourceComponent: StartMenu {
       anchorItem: startButton
       bar: root.bar
@@ -275,18 +443,33 @@ BarWidget {
     spacing: Math.round(root.barSize * 0.08)
 
     Repeater {
-      model: root.items
+      id: appsRepeater
+      model: root.rowItems
 
       Rectangle {
         id: button
         required property var modelData
+        required property int index
         readonly property var entry: DesktopEntries.byId(modelData.key)
         readonly property string indicator: Model.indicator(modelData)
-        readonly property bool labeled: cfg.get("taskbar.showLabels", false)
-        readonly property string label: modelData.windows.length > 0 ? String(modelData.windows[0].title || "") : (entry ? entry.name : modelData.key)
+        readonly property bool labeled: root.labeled
+        readonly property string label: root.labelFor(modelData)
+        readonly property bool held: root.dragFrom === index
 
-        width: labeled ? Math.min(root.slot * 5, root.slot + labelText.implicitWidth + root.slot * 0.4) : root.slot
+        width: root.buttonWidth(modelData)
         height: root.slot
+        z: held ? 1 : 0
+        // Dragged, it follows the pointer and the others step aside.
+        transform: Translate {
+          x: button.held ? root.dragDx : Model.shiftFor(button.index, root.dragFrom, root.dragTo, root.dragRoom)
+          Behavior on x {
+            enabled: !button.held
+            NumberAnimation {
+              duration: Style.duration(150)
+              easing.type: Easing.OutCubic
+            }
+          }
+        }
         radius: Math.max(Style.cornerRadius, 4)
         color: buttonMouse.pressed ? Style.pressedFill
              : buttonMouse.containsMouse ? Style.hoverFill
@@ -346,10 +529,42 @@ BarWidget {
 
         MouseArea {
           id: buttonMouse
+          // Where the press was along the row, which the button's own
+          // movement doesn't shift.
+          property real pressX: 0
+          property bool suppressClick: false
           anchors.fill: parent
           hoverEnabled: true
           acceptedButtons: Qt.LeftButton | Qt.MiddleButton | Qt.RightButton
+          preventStealing: button.held
+          onPressed: function(mouse) {
+            suppressClick = false
+            pressX = mapToItem(appsRow, mouse.x, 0).x
+          }
+          onPositionChanged: function(mouse) {
+            if (!(mouse.buttons & Qt.LeftButton))
+              return
+            var dx = mapToItem(appsRow, mouse.x, 0).x - pressX
+            if (!button.held) {
+              if (root.dragFrom >= 0 || Math.abs(dx) < Style.space(8))
+                return
+              root.beginDrag(button.index)
+              if (root.bar)
+                root.bar.hideTooltip(button)
+            }
+            root.moveDrag(dx)
+          }
+          // Settled after the click is swallowed: a new order rebuilds the row.
+          onReleased: if (button.held) {
+            suppressClick = true
+            Qt.callLater(root.endDrag, true)
+          }
+          onCanceled: if (button.held) root.endDrag(false)
           onClicked: function(mouse) {
+            if (suppressClick) {
+              suppressClick = false
+              return
+            }
             if (mouse.button === Qt.RightButton)
               root.openContext(button, button.modelData)
             else if (mouse.button === Qt.MiddleButton)
@@ -358,7 +573,7 @@ BarWidget {
               root.activate(button.modelData)
           }
           onContainsMouseChanged: {
-            if (!root.bar)
+            if (!root.bar || root.dragFrom >= 0)
               return
             if (containsMouse)
               root.bar.showTooltip(button, button.modelData.windows.length > 1
@@ -366,6 +581,118 @@ BarWidget {
                   : button.label)
             else
               root.bar.hideTooltip(button)
+          }
+        }
+      }
+    }
+
+    // Windows 11's overflow button, for the apps that don't fit.
+    Rectangle {
+      id: moreButton
+      visible: root.overflowItems.length > 0
+      width: root.slot
+      height: root.slot
+      radius: Math.max(Style.cornerRadius, 4)
+      color: moreMouse.pressed ? Style.pressedFill : (moreMouse.containsMouse || root.overflowOpen ? Style.hoverFill : "transparent")
+
+      Row {
+        anchors.centerIn: parent
+        spacing: Math.max(2, Math.round(root.slot * 0.07))
+        Repeater {
+          model: 3
+          Rectangle {
+            width: Math.max(3, Math.round(root.slot * 0.08))
+            height: width
+            radius: width / 2
+            color: root.bar ? root.bar.foreground : Commons.Color.foreground
+          }
+        }
+      }
+
+      MouseArea {
+        id: moreMouse
+        anchors.fill: parent
+        hoverEnabled: true
+        onClicked: root.overflowOpen = !root.overflowOpen
+      }
+    }
+  }
+
+  // ---------- Overflow flyout ----------
+
+  QtObject {
+    id: overflowOwner
+    function close() {
+      root.overflowOpen = false
+    }
+  }
+
+  Loader {
+    active: root.part === "apps" && (root.overflowOpen || item !== null)
+    sourceComponent: KeyboardPanel {
+      id: overflowPanel
+      anchorItem: moreButton
+      bar: root.bar
+      owner: overflowOwner
+      open: root.overflowOpen
+      contentWidth: overflowPanel.fittedContentWidth(overflowGrid.implicitWidth)
+      contentHeight: overflowPanel.fittedContentHeight(overflowGrid.implicitHeight)
+
+      Grid {
+        id: overflowGrid
+        columns: Math.max(1, Math.min(5, root.overflowItems.length))
+        spacing: Math.round(root.barSize * 0.08)
+
+        Repeater {
+          model: root.overflowItems
+
+          Rectangle {
+            id: cell
+            required property var modelData
+            readonly property var entry: DesktopEntries.byId(modelData.key)
+            readonly property string indicator: Model.indicator(modelData)
+            width: root.slot
+            height: root.slot
+            radius: Math.max(Style.cornerRadius, 4)
+            color: cellMouse.pressed ? Style.pressedFill : (cellMouse.containsMouse ? Style.hoverFill : "transparent")
+
+            Image {
+              anchors.centerIn: parent
+              width: root.iconSize
+              height: root.iconSize
+              sourceSize.width: width * 2
+              sourceSize.height: height * 2
+              source: root.iconFor(cell.entry, cell.modelData.windows.length ? cell.modelData.windows[0].appId : cell.modelData.key)
+              asynchronous: String(source).indexOf("file:") === 0
+            }
+
+            Rectangle {
+              anchors.horizontalCenter: parent.horizontalCenter
+              anchors.bottom: parent.bottom
+              anchors.bottomMargin: 2
+              visible: cell.indicator !== "none"
+              width: cell.indicator === "active" ? Math.round(root.slot * 0.4) : Math.round(root.slot * 0.16)
+              height: 3
+              radius: 1.5
+              color: cell.indicator === "active" ? Commons.Color.accent : Commons.Util.alpha(Commons.Color.popups.text, 0.55)
+            }
+
+            MouseArea {
+              id: cellMouse
+              anchors.fill: parent
+              hoverEnabled: true
+              acceptedButtons: Qt.LeftButton | Qt.MiddleButton | Qt.RightButton
+              onClicked: function(mouse) {
+                var item = cell.modelData
+                root.overflowOpen = false
+                if (mouse.button === Qt.RightButton)
+                  root.openContext(moreButton, item)
+                else if (mouse.button === Qt.MiddleButton)
+                  root.launch(item.key)
+                else
+                  root.activate(item)
+              }
+            }
           }
         }
       }

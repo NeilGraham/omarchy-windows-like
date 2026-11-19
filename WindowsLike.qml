@@ -40,6 +40,13 @@ Item {
         sourceDir: root.manifest && root.manifest.__sourceDir ? String(root.manifest.__sourceDir) : ""
     }
 
+    // The overlay's fades: off with animations.enabled, and with Omarchy's
+    // own switch (Style.duration is then 0). Windows glide by Hyprland's
+    // windowsMove animation (hypr/windows-like.lua).
+    function duration(ms) {
+        return wl.get("animations.enabled", true) ? Style.duration(ms) : 0;
+    }
+
     // ---------- Tunables ----------
 
     // How close (logical px) the pointer must be to a screen edge.
@@ -998,8 +1005,13 @@ Item {
     readonly property bool dragOverlay: root.dragActive && (root.showCard || root.previewRect !== null)
     readonly property bool cardVisible: root.mode === "picker" || (root.dragActive && root.showCard)
 
+    // Made on first use and kept, hidden between uses, so a drag doesn't wait
+    // on building it.
+    property bool overlayMade: false
+    onOpenedChanged: if (root.opened) root.overlayMade = true
+    onDragOverlayChanged: if (root.dragOverlay) root.overlayMade = true
     Loader {
-        active: (root.opened || root.dragOverlay) && root.monitor !== null
+        active: root.overlayMade && root.monitor !== null
         sourceComponent: overlayComponent
     }
 
@@ -1028,6 +1040,8 @@ Item {
                 bottom: true
                 left: true
             }
+            // Mapped while in use, and while its pieces fade out.
+            visible: root.opened || root.dragOverlay || landing.opacity > 0 || card.opacity > 0 || scrim.opacity > 0
             color: "transparent"
             exclusionMode: ExclusionMode.Ignore
             WlrLayershell.namespace: "windows-like"
@@ -1058,17 +1072,29 @@ Item {
                     onClicked: root.close()
                 }
 
+                // Fades start once the surface is on screen, so none of
+                // their first frames are spent mapping it.
+                readonly property bool onScreen: surface.backingWindowVisible
+
                 Rectangle {
+                    id: scrim
                     anchors.fill: parent
-                    visible: root.mode === "assist"
+                    visible: opacity > 0
                     color: "black"
-                    opacity: 0.35
+                    opacity: root.mode === "assist" && content.onScreen ? 0.35 : 0
+                    Behavior on opacity { NumberAnimation { duration: root.duration(150); easing.type: Easing.OutCubic } }
                 }
 
-                // Where the window will land.
+                // Where the window will land. It appears where it points and
+                // fades; it glides only from one place to the next, and fades
+                // out where it was as the window takes its place.
                 Rectangle {
-                    readonly property var r: root.previewRect
-                    visible: r !== null
+                    id: landing
+                    property var r: null
+                    readonly property var target: root.previewRect
+                    onTargetChanged: if (target) r = target
+                    visible: opacity > 0 && r !== null
+                    opacity: target !== null && content.onScreen ? 1 : 0
                     x: r ? r.x - root.monitor.x : 0
                     y: r ? r.y - root.monitor.y : 0
                     width: r ? r.w : 0
@@ -1078,17 +1104,25 @@ Item {
                     border.color: root.withAlpha(Commons.Color.accent, 0.8)
                     border.width: 2
 
-                    Behavior on x { NumberAnimation { duration: Style.duration(90); easing.type: Easing.OutCubic } }
-                    Behavior on y { NumberAnimation { duration: Style.duration(90); easing.type: Easing.OutCubic } }
-                    Behavior on width { NumberAnimation { duration: Style.duration(90); easing.type: Easing.OutCubic } }
-                    Behavior on height { NumberAnimation { duration: Style.duration(90); easing.type: Easing.OutCubic } }
+                    Behavior on opacity { NumberAnimation { duration: root.duration(landing.target ? 120 : 160); easing.type: Easing.OutCubic } }
+                    Behavior on x { enabled: landing.opacity > 0; NumberAnimation { duration: root.duration(150); easing.type: Easing.OutCubic } }
+                    Behavior on y { enabled: landing.opacity > 0; NumberAnimation { duration: root.duration(150); easing.type: Easing.OutCubic } }
+                    Behavior on width { enabled: landing.opacity > 0; NumberAnimation { duration: root.duration(150); easing.type: Easing.OutCubic } }
+                    Behavior on height { enabled: landing.opacity > 0; NumberAnimation { duration: root.duration(150); easing.type: Easing.OutCubic } }
                 }
 
                 // ----- Layout picker card -----
+                // Drops in from just above its place as it fades, like Windows
+                // 11's snap layouts.
                 Rectangle {
                     id: card
                     readonly property var r: root.cardRect()
-                    visible: root.cardVisible
+                    visible: opacity > 0
+                    opacity: root.cardVisible && content.onScreen ? 1 : 0
+                    Behavior on opacity { NumberAnimation { duration: root.duration(root.cardVisible ? 160 : 110); easing.type: Easing.OutCubic } }
+                    transform: Translate {
+                        y: (card.opacity - 1) * 12
+                    }
                     x: r.x
                     y: r.y
                     width: r.w
@@ -1188,6 +1222,8 @@ Item {
                     readonly property var r: root.mode === "assist" && root.assistZone >= 0
                         ? root.zoneOuterRect(root.monitor, root.assistLayout, root.assistZone) : null
                     visible: r !== null
+                    opacity: visible && content.onScreen ? 1 : 0
+                    Behavior on opacity { NumberAnimation { duration: root.duration(150); easing.type: Easing.OutCubic } }
                     x: r ? r.x - root.monitor.x : 0
                     y: r ? r.y - root.monitor.y : 0
                     width: r ? r.w : 0

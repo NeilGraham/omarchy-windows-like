@@ -64,11 +64,31 @@ if setting("taskbar.enabled", true) then
   o.rebind("SUPER + ALT + SPACE", "All apps", hl.dsp.event("windows-like-start-apps"))
 end
 
+-- ---------- Animations ----------
+
+-- Snapped windows glide into their zone, as on Windows. Hyprland animates a
+-- window's move and resize (windowsMove) itself, every frame at the monitor's
+-- refresh rate; this makes that a short deceleration (220 ms, Windows'
+-- "decelerate" curve) in place of Omarchy's longer ease. With
+-- animations.enabled off, windows land at once. Omarchy's own switch
+-- (animations off everywhere) turns this off too.
+if setting("animations.enabled", true) then
+  hl.curve("windowsLikeDecelerate", { type = "bezier", points = { { 0.1, 0.9 }, { 0.2, 1 } } })
+  hl.animation({ leaf = "windowsMove", enabled = true, speed = 2.2, bezier = "windowsLikeDecelerate" })
+else
+  hl.animation({ leaf = "windowsMove", enabled = false })
+end
+
+-- The snap preview, layout picker and snap assist (WindowsLike.qml) fade
+-- themselves; Hyprland's layer fade would run on top of that.
+hl.layer_rule({ match = { namespace = "^windows-like$" }, no_anim = true, animation = "none" })
+
 -- ---------- Tabs ----------
 
 -- Tabs are Hyprland groups drawn by the plugin's own tab bar, so Hyprland's
--- group bar stays off. Windows only join a group when asked to (a new tab):
--- not as they open, and not when dropped on one (Hyprland's drag_into_group
+-- group bar stays off. Windows only join a group when asked to (a new tab,
+-- or a tab dropped on the tabs, which the plugin handles): not as they open,
+-- and not when dropped on one by the title bar (Hyprland's drag_into_group
 -- would merge a window carried over another into its tabs). A new tab goes
 -- to the end, like on a Mac.
 hl.config({

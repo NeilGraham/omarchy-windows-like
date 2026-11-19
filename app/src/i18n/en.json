@@ -1,1 +1,3 @@
-{}
+{
+  "%n display(s) connected": { "one": "%n display connected", "other": "%n displays connected" }
+}

@@ -12,6 +12,9 @@
 bool sideResizeEnabled();
 // plugin:windows_like:joint_resize: windows sharing an edge resize together.
 bool jointResizeEnabled();
+// main.cpp: report the end of a drag that ended without Hyprland seeing the
+// button go up (a tab carried and dropped: the tab bar takes its release).
+void reportDragSoon();
 
 namespace Tabs {
   void init(HANDLE handle);

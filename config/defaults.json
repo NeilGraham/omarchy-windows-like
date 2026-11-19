@@ -32,6 +32,9 @@
     "terminalShortcuts": true,
     "terminalNames": true
   },
+  "animations": {
+    "enabled": true
+  },
   "general": {
     "floatingDefault": true,
     "superZ": true

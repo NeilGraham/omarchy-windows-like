@@ -61,21 +61,37 @@ void Theme::refreshRounding() {
     m_roundingTimeout.start();
 }
 
-QString Theme::readAccent(const QString &path) {
+// The `key = "value"` lines of colors.toml: six-digit colors, and the mode.
+QHash<QString, QString> Theme::readColors(const QString &path) {
+    QHash<QString, QString> colors;
     QFile file(path);
-    if (file.open(QIODevice::ReadOnly)) {
-        const QRegularExpression expression(R"re(^\s*accent\s*=\s*["'](#[0-9a-fA-F]{6})["'])re",
-                                            QRegularExpression::MultilineOption);
-        const auto match = expression.match(QString::fromUtf8(file.readAll()));
-        if (match.hasMatch())
-            return match.captured(1);
+    if (!file.open(QIODevice::ReadOnly))
+        return colors;
+    static const QRegularExpression expression(R"re(^\s*([a-z_]+)\s*=\s*["'](#[0-9a-fA-F]{6}|light|dark)["'])re",
+                                               QRegularExpression::MultilineOption);
+    auto matches = expression.globalMatch(QString::fromUtf8(file.readAll()));
+    while (matches.hasNext()) {
+        const auto match = matches.next();
+        colors.insert(match.captured(1), match.captured(2));
     }
-    return "#FFD60A";
+    return colors;
+}
+
+QString Theme::readAccent(const QString &path) {
+    return readColors(path).value("accent", "#FFD60A");
+}
+
+QString Theme::color(const QString &key) const {
+    static const QHash<QString, QString> fallback{{"accent", "#FFD60A"}, {"dark_background", "#151517"},
+                                                  {"background", "#1c1c1f"}, {"foreground", "#f5f5f7"},
+                                                  {"red", "#ff6b6b"}};
+    const QString value = m_colors.value(key);
+    return value.startsWith('#') ? value : fallback.value(key);
 }
 
 // Black or white, whichever reads on the accent (WCAG relative luminance).
 QString Theme::accentForeground() const {
-    const QColor c(m_accent);
+    const QColor c(accent());
     auto linear = [](double v) { return v <= .04045 ? v / 12.92 : std::pow((v + .055) / 1.055, 2.4); };
     const double luminance = .2126 * linear(c.redF()) + .7152 * linear(c.greenF()) + .0722 * linear(c.blueF());
     return luminance > .179 ? "black" : "white";
@@ -100,9 +116,9 @@ void Theme::reload() {
         if (QFileInfo::exists(path))
             m_watcher.addPath(path);
 
-    const auto accent = readAccent(m_directory + "/theme/colors.toml");
-    if (accent != m_accent) {
-        m_accent = accent;
+    const auto colors = readColors(m_directory + "/theme/colors.toml");
+    if (colors != m_colors) {
+        m_colors = colors;
         emit changed();
     }
 }

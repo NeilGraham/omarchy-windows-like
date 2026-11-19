@@ -11,8 +11,8 @@ Usage: omarchy-windows-like <command>
              settings, and rebuild automatically after `omarchy update`
   apply      Apply ~/.config/omarchy-windows-like/settings.json: taskbar layout,
              position and height, dock, Hyprland module settings, floating default
-  install-app  Build and install Windows-like Settings as a package (asks for
-             your password)
+  install-app  Build and install the Settings and This PC apps as a package
+             (asks for your password)
   build      Rebuild the drag-events plugin for the running Hyprland, reload it,
              and restart the shell so it runs the current WindowsLike.qml
   status     Show what is installed
@@ -368,7 +368,7 @@ cmd_setup() {
   reload_shell
   say "Done. Drag a window by its title bar to an edge, a corner, or the top of the screen."
   command -v windows-like-settings >/dev/null ||
-    say "To change settings in an app, install Windows-like Settings: omarchy-windows-like install-app"
+    say "To change settings in an app, install Settings: omarchy-windows-like install-app"
 }
 
 cmd_build() {

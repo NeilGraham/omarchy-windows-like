@@ -19,14 +19,24 @@ the right with a two-line clock last, whose calendar opens above it.
   running app and a longer accent line under the focused one. Click to open,
   bring forward, minimize, or step through an app's windows; right-click to
   pin, open another window, or close.
+- Drag an app button sideways to move it; the others make room. Pinned apps
+  keep their new order (it is saved with the pins); a running app that isn't
+  pinned keeps its place until the shell restarts, as on Windows.
+- When the buttons no longer fit beside the tray, the last ones go behind a
+  **•••** button, which opens them in a flyout, as on Windows 11.
 - **Start** (tap **Super** on its own, or click the mark): search, pinned
-  apps, All apps A–Z, and Recommended — apps you used and installed recently —
-  with your name and power options. **Super + Alt + Space** opens All apps.
+  apps, All apps A–Z, and Recommended — apps you used and installed recently,
+  leaving out the ones pinned to Start — with your name and power options.
+  **Super + Alt + Space** opens All apps.
 - The bar reserves its space, so snapped, stretched and maximized windows
   never end up behind it. Omarchy's dock steps aside while the taskbar is on.
 
-**Windows-like Settings**, an app in the launcher, turns each part on or off
-(see [app/README.md](app/README.md)). Settings live in
+**Settings**, an app in the launcher laid out like Windows 11's, turns each
+part on or off under **Package**, and sums up your monitors under **Display**.
+**This PC** shows your folders, drives and network locations with the space
+free on each, like Windows' This PC, and opens them in Files (which gets a
+*This PC* item in its right-click menu). Both come in one package (see
+[app/README.md](app/README.md)). Settings live in
 `~/.config/omarchy-windows-like/settings.json`; `omarchy-windows-like apply`
 applies them, and turning the taskbar off brings back Omarchy's bar exactly as
 it was.
@@ -50,6 +60,15 @@ A preview shows where the window will land before you let go. After a snap,
 skip a space, Esc to stop). Dragging a snapped window away gives it back the
 size it had before.
 
+**Smooth motion:** a snapped window glides into its place with a short
+decelerating ease (220 ms, like Windows), animated by Hyprland every frame at
+your monitor's refresh rate (this is Hyprland's window-move animation, so
+other moves and resizes Hyprland animates get the same ease). Start slides up from the taskbar (down from a bar
+at the top) as it fades in and goes back quicker than it came; the snap
+preview and layout picker fade in and out. `animations.enabled` in
+settings.json turns all of this off (windows then land at once), and so does
+Omarchy's own switch for animations, which turns them off everywhere.
+
 **Full-height stretch:** drag a window's top or bottom border to the edge of
 the screen and it stretches from top to bottom, keeping its width.
 
@@ -69,14 +88,19 @@ sits where its name was (rest the pointer on it for the name), then the tabs, th
 window of the same app as a new tab, with the minimize, maximize and close
 buttons left where they are at the right. foot shows its tab from the start;
 other apps once they have a second tab. Each tab has a ✕ (on the active tab,
-and on any tab you hover), middle-click closes a tab, dragging a tab (or the
-logo, or the empty title bar) moves the window, and when tabs no longer fit
-they scroll sideways with the wheel or touchpad. Opening and closing tabs is
-instant, like switching them (no window animations), and takes no room from
-the window. A window without a title bar (a tiled one) gets a tab bar of its
-own under its border once it has a second tab. Tabs are Hyprland groups
-underneath, so Omarchy's group shortcuts (Super + G, Super + Alt + 1–5…) work
-on them too.
+and on any tab you hover), middle-click closes a tab, dragging the logo or the
+empty title bar moves the window, and when tabs no longer fit they scroll
+sideways with the wheel or touchpad. Tabs drag like in Windows Terminal: along
+the tab strip to reorder them, or out of it to tear one off into a window of
+its own, which follows the pointer (and snaps like any dragged window). A
+window dragged by its tab (a torn-off tab, or a window with one tab, which its
+tab simply moves) joins another window's tabs when dropped on them, where it
+is dropped. A double click on a tab maximizes, as on the title bar. Opening
+and closing tabs is instant, like switching them (no window animations), and
+takes no room from the window. A window without a title bar (a tiled one) gets
+a tab bar of its own under its border once it has a second tab. Tabs are
+Hyprland groups underneath, so Omarchy's group shortcuts (Super + G, Super +
+Alt + 1–5…) work on them too.
 
 In **foot**, Mac Terminal's shortcuts work with Ctrl in place of Cmd:
 
@@ -156,8 +180,8 @@ Two parts, each kept as small as possible:
   side that was pressed and sets the border cursor from the whole window,
   title bar included. And it draws tabs in the title bar (`tabs.cpp`), in
   place of Hyprland's group bar: the one place it takes input, from a hook on
-  Hyprland's mouse button handler, so a click on a tab's ✕ or on **+** goes to
-  the tab and not to the title bar under it.
+  Hyprland's mouse button handler, so a press on a tab, its ✕ or **+** goes to
+  the tab and not to the title bar under it (tab drags are run from there).
 - **`WindowsLike.qml`** — an Omarchy shell plugin (Quickshell) that listens for
   those events, draws the preview and the layout picker, and places windows
   with `hyprctl eval`. Gaps, border size and title bar height are read from
@@ -176,6 +200,7 @@ python -I tests/test_drag_events.py native/drag-events/drag-events.so
 python -I tests/test_snapping.py native/drag-events/drag-events.so
 python -I tests/test_edges.py native/drag-events/drag-events.so
 python -I tests/test_tabs.py native/drag-events/drag-events.so
+python -I tests/test_tab_drag.py native/drag-events/drag-events.so
 python -I tests/test_taskbar_space.py native/drag-events/drag-events.so
 python -I tests/test_keys.py native/drag-events/drag-events.so
 python -I tests/test_snap_fill.py native/drag-events/drag-events.so
@@ -205,7 +230,6 @@ title bars and borders, and checks where they land. Screenshots go to
 
 - Win + arrow keys to snap and maximize from the keyboard
 - Restore the pre-snap size as soon as a snapped window is dragged (not on drop)
-- Drag tabs to reorder them, or out into a window of their own
 - Tab shortcuts for every app (e.g. Super + Alt + T / W), not just foot
 - Alt + Tab window switcher with previews; Win + D to show the desktop
 - Taskbar polish on top of Omarchy's dock

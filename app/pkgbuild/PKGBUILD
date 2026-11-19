@@ -1,10 +1,12 @@
 pkgname=windows-like-settings
-pkgver=0.1.0
+pkgver=0.2.0
 pkgrel=1
-pkgdesc='Settings for omarchy-windows-like: taskbar and Start, snapping, tabs'
+pkgdesc='Settings and This PC, like Windows 11: display, drives, and the taskbar and Start, snapping and tabs of omarchy-windows-like'
 arch=('x86_64' 'aarch64')
 license=('MIT')
 depends=('qt6-base' 'qt6-declarative' 'qt6-wayland' 'hicolor-icon-theme' 'jq')
+optdepends=('udisks2: mount and eject drives from This PC'
+            'python-nautilus: a This PC item in the Files right-click menu')
 makedepends=('gcc' 'make')
 # No separate -debug package: the binary is built without debug symbols.
 options=('!debug')
@@ -22,6 +24,11 @@ package() {
   install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
   install -Dm644 "$startdir/windows-like-settings.svg" "$pkgdir/usr/share/icons/hicolor/scalable/apps/windows-like-settings.svg"
   install -Dm644 "$startdir/windows-like-settings.desktop" "$pkgdir/usr/share/applications/windows-like-settings.desktop"
+  # This PC: the same binary with --this-pc, its own launcher entry and icon,
+  # and a way in from Files where nautilus-python is installed.
+  install -Dm644 "$startdir/windows-like-this-pc.svg" "$pkgdir/usr/share/icons/hicolor/scalable/apps/windows-like-this-pc.svg"
+  install -Dm644 "$startdir/windows-like-this-pc.desktop" "$pkgdir/usr/share/applications/windows-like-this-pc.desktop"
+  install -Dm644 nautilus/windows-like-this-pc.py "$pkgdir/usr/share/nautilus-python/extensions/windows-like-this-pc.py"
   # The plugin's defaults, so the app can say what each setting is even
   # before the plugin is set up.
   install -Dm644 ../config/defaults.json "$pkgdir/usr/share/windows-like-settings/defaults.json"

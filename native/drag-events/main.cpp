@@ -534,6 +534,8 @@ void onButton(const IPointer::SButtonEvent &e) {
 
 } // namespace
 
+void reportDragSoon() { checkSoon(); }
+
 APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
   PHANDLE = handle;
 

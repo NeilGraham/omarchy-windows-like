@@ -3,47 +3,28 @@ import QtQuick.Controls
 import QtQuick.Controls.Material
 import QtQuick.Layouts
 
-// One setting: a title, a line on what it does, and a switch bound to a
-// settings path such as "snapping.edges".
-ItemDelegate {
+// A setting that's on or off, bound to a settings path such as
+// "snapping.edges". The whole card toggles it, and so does Space.
+SettingsCard {
     id: row
     required property string path
-    required property string title
-    property string description: ""
 
     readonly property bool enabledValue: {
         backend.settings
         return backend.value(row.path) === true
     }
 
-    Layout.fillWidth: true
-    padding: 12
-    Material.roundedScale: theme.radius
+    clickable: true
     onClicked: backend.setValue(row.path, !row.enabledValue)
 
-    contentItem: RowLayout {
-        spacing: 16
-        ColumnLayout {
-            Layout.fillWidth: true
-            spacing: 2
-            Label {
-                Layout.fillWidth: true
-                text: row.title
-                font.pixelSize: 15
-                wrapMode: Text.WordWrap
-            }
-            Label {
-                Layout.fillWidth: true
-                visible: row.description !== ""
-                text: row.description
-                opacity: 0.6
-                font.pixelSize: 13
-                wrapMode: Text.WordWrap
-            }
-        }
-        Switch {
-            checked: row.enabledValue
-            onToggled: backend.setValue(row.path, checked)
-        }
+    // "On" or "Off" beside the switch, as Windows writes it.
+    Label {
+        text: row.enabledValue ? qsTr("On") : qsTr("Off")
+        opacity: 0.8
+    }
+    Switch {
+        checked: row.enabledValue
+        focusPolicy: Qt.NoFocus
+        onToggled: backend.setValue(row.path, checked)
     }
 }

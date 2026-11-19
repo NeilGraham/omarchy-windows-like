@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=This PC
+Comment=Folders, drives and network locations, with the space free on each
+Exec=windows-like-settings --this-pc
+Icon=windows-like-this-pc
+Terminal=false
+Categories=System;FileManager;Utility;
+Keywords=computer;drives;disks;usb;mount;storage;space;explorer;
+StartupWMClass=windows-like-this-pc

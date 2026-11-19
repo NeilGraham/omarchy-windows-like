@@ -64,6 +64,116 @@ function buildItems(pinned, windows, workspaceId) {
   return items
 }
 
+// The buttons in the order they were dragged into this session (`order`,
+// their keys). Pins keep their saved order among themselves: wherever the
+// order has a pin, the next pin in saved order goes. A pin the order doesn't
+// know yet goes after the last pin, a new running app at the end.
+function arrange(items, order) {
+  var list = (items || []).slice()
+  if (!order || order.length === 0)
+    return list
+  var byKey = {}
+  var pins = []
+  for (var i = 0; i < list.length; i++) {
+    byKey[list[i].key] = list[i]
+    if (list[i].pinned)
+      pins.push(list[i])
+  }
+  var out = []
+  var placed = {}
+  var nextPin = 0
+  for (var j = 0; j < order.length; j++) {
+    var item = byKey[order[j]]
+    if (!item || placed[item.key])
+      continue
+    if (item.pinned)
+      item = pins[nextPin++]
+    placed[item.key] = true
+    out.push(item)
+  }
+  var lastPin = -1
+  for (var k = 0; k < out.length; k++)
+    if (out[k].pinned)
+      lastPin = k
+  for (; nextPin < pins.length; nextPin++)
+    out.splice(++lastPin, 0, pins[nextPin])
+  for (var m = 0; m < list.length; m++)
+    if (!list[m].pinned && !placed[list[m].key])
+      out.push(list[m])
+  return out
+}
+
+// `list` with the element at `from` moved to `to`.
+function move(list, from, to) {
+  var out = (list || []).slice()
+  if (from < 0 || from >= out.length)
+    return out
+  var moved = out.splice(from, 1)[0]
+  out.splice(Math.max(0, Math.min(to, out.length)), 0, moved)
+  return out
+}
+
+// Where a dragged button lands: past every other button whose middle its
+// middle has passed. centers are the buttons' middles where they stand.
+function dropIndex(centers, from, center) {
+  var to = 0
+  for (var i = 0; i < (centers || []).length; i++)
+    if (i !== from && centers[i] < center)
+      to++
+  return to
+}
+
+// How far the button at `index` steps aside while the one at `from` is held
+// over `to`: by the dragged button's room (its width and the spacing).
+function shiftFor(index, from, to, room) {
+  if (from < 0 || index === from)
+    return 0
+  if (from < to && index > from && index <= to)
+    return -room
+  if (to < from && index >= to && index < from)
+    return room
+  return 0
+}
+
+// The saved pins with the ones in `keys` put in the order they have there;
+// pins not shown (an app no longer installed) keep their places.
+function reorderPinned(saved, keys) {
+  var list = (saved || []).slice()
+  var isPin = {}
+  for (var i = 0; i < list.length; i++)
+    isPin[list[i]] = true
+  var shown = (keys || []).filter(function(k) {
+    return isPin[k]
+  })
+  var isShown = {}
+  for (var j = 0; j < shown.length; j++)
+    isShown[shown[j]] = true
+  var next = 0
+  for (var k = 0; k < list.length; k++)
+    if (isShown[list[k]])
+      list[k] = shown[next++]
+  return list
+}
+
+// How many buttons fit in `room`, with `spacing` between them. When not all
+// do, as many as fit beside an overflow button `moreWidth` wide, as on
+// Windows 11.
+function fitCount(widths, spacing, room, moreWidth) {
+  var n = (widths || []).length
+  var total = 0
+  for (var i = 0; i < n; i++)
+    total += widths[i] + (i > 0 ? spacing : 0)
+  if (!(room < total))
+    return n
+  var used = moreWidth
+  var count = 0
+  while (count < n && used + spacing + widths[count] <= room) {
+    used += spacing + widths[count]
+    count++
+  }
+  return count
+}
+
 // What clicking a button does, like Windows:
 //   no window            -> launch the app
 //   its window is active -> minimize it (one window), or go to the next one
@@ -133,6 +243,37 @@ function recentlyInstalled(lines, knownIds, max) {
   return out
 }
 
+// Start's Recommended: recently installed and recently used apps, taking
+// turns so both kinds show, without repeats and without apps pinned to Start
+// (the next ones move up instead). idOf(id) gives the id of the entry an id
+// names, or "" to leave it out (gone, or hidden from menus).
+// Returns [{ id, why: "installed" | "used" }], at most `max`.
+function recommendations(installed, recent, pinned, idOf, max) {
+  var skip = {}
+  for (var i = 0; i < (pinned || []).length; i++) {
+    var p = idOf(pinned[i])
+    if (p)
+      skip[p] = true
+  }
+  var out = []
+  var n = installed || []
+  var r = recent || []
+  function add(id, why) {
+    var entryId = idOf(id)
+    if (entryId && !skip[entryId] && out.length < (max || 8)) {
+      skip[entryId] = true
+      out.push({ id: entryId, why: why })
+    }
+  }
+  for (var j = 0; j < Math.max(n.length, r.length); j++) {
+    if (j < n.length)
+      add(n[j], "installed")
+    if (j < r.length)
+      add(r[j], "used")
+  }
+  return out
+}
+
 // The letter an app is filed under in "All apps": A-Z, or "#" for the rest.
 function letterFor(name) {
   var c = String(name || "").trim().charAt(0).toUpperCase()
@@ -163,10 +304,17 @@ if (typeof module !== "undefined")
     claimingEntryId: claimingEntryId,
     visibleWindow: visibleWindow,
     buildItems: buildItems,
+    arrange: arrange,
+    move: move,
+    dropIndex: dropIndex,
+    shiftFor: shiftFor,
+    reorderPinned: reorderPinned,
+    fitCount: fitCount,
     clickAction: clickAction,
     indicator: indicator,
     pushRecent: pushRecent,
     recentlyInstalled: recentlyInstalled,
+    recommendations: recommendations,
     letterFor: letterFor,
     withLetterHeaders: withLetterHeaders
   }
