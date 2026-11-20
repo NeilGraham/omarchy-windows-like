@@ -28,7 +28,7 @@
   },
   "barWidget": {
     "displayName": "Windows-like taskbar",
-    "description": "Start button, or pinned and running apps (setting \"part\": \"start\" | \"apps\")",
+    "description": "Start button, desktops, or pinned and running apps (setting \"part\": \"start\" | \"desktops\" | \"apps\")",
     "category": "Windows-like",
     "allowMultiple": true,
     "defaultSection": "center",

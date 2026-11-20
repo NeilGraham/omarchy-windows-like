@@ -16,7 +16,8 @@ from nested import Nested, TITLEBARS  # noqa: E402
 plugin = Path(sys.argv[1]).resolve()
 artifacts = Path(sys.argv[2] if len(sys.argv) > 2 else '/tmp/owl-test-taskbar-space')
 
-TASKBAR, GAPS_OUT, BORDER, BAR = 44, 10, 2, 30
+# Snapped windows meet the screen's edges and the taskbar (snapping.gaps off).
+TASKBAR, GAPS_OUT, BORDER, BAR = 44, 0, 2, 30
 
 
 def wait_for(fn, timeout=4, what='condition'):
@@ -70,10 +71,10 @@ with Nested(artifacts) as n:
   x = c['at'][0] + c['size'][0] // 2
   n.drag((x, outer_bottom(c) + 3), (x, round(height) - TASKBAR - 2))
   c = wait_for(lambda: (lambda c: c if c['size'][1] > 400 else None)(n.client(addr)), what='full-height stretch')
-  # The shell asks for exactly bottom_limit; after a border drag Hyprland can
-  # land a pixel lower, still inside the gap and clear of the taskbar.
-  assert 0 <= outer_bottom(c) - bottom_limit <= 1 and c['at'][1] == GAPS_OUT + BORDER + BAR, (c['at'], c['size'], bottom_limit)
-  assert outer_bottom(c) < round(height) - TASKBAR, 'behind the taskbar'
+  # Hyprland finishes the border drag after the drop and can leave the window
+  # a pixel taller; the shell places it again, so it ends up right on the line.
+  c = wait_for(lambda: (lambda c: c if outer_bottom(c) == bottom_limit else None)(n.client(addr)), what='stretch to end at the taskbar')
+  assert c['at'][1] == GAPS_OUT + BORDER + BAR, (c['at'], c['size'], bottom_limit)
   print('PASS: full-height stretch ends above the taskbar', flush=True)
 
   # Maximizing (dragging to the top) leaves the taskbar clear.

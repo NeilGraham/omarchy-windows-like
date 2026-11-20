@@ -273,16 +273,20 @@ dock_enabled() {
   ! jq -e '(.disabledPlugins // []) | index("omarchy.dock")' "$SHELL_JSON" >/dev/null 2>&1
 }
 
-# The taskbar is Omarchy's bar, moved and re-laid out: workspaces on the left,
-# start and apps in the middle (Windows 11) or on the left (classic), and
-# everything else the bar had on the right, with the clock last.
+# The taskbar is Omarchy's bar, moved and re-laid out. Windows 11: weather,
+# world clock and indicators (taskbar.leftWidgets) on the left, Start,
+# desktops and apps in the middle. Classic: Start, desktops and apps on the
+# left. Everything else the bar had goes on the right, with the clock last.
+# Omarchy's workspace numbers (taskbar.showWorkspaces) go first on the left.
 apply_taskbar() {
-  local enabled style position height workspaces
+  local enabled style position height workspaces desktops
   enabled=$(setting '.taskbar.enabled')
   style=$(setting '.taskbar.style')
   position=$(setting '.taskbar.position')
   height=$(setting '.taskbar.height')
   workspaces=$(setting '.taskbar.showWorkspaces')
+  desktops=$(setting '.taskbar.showDesktops')
+  left_widgets=$(setting '.taskbar.leftWidgets // [] | tojson')
 
   if [[ $enabled != true ]]; then
     if [[ -f $BAR_BACKUP ]]; then
@@ -303,7 +307,7 @@ apply_taskbar() {
   fi
 
   edit_shell_json --slurpfile backup "$BAR_BACKUP" --arg id "$PLUGIN_ID" --arg style "$style" \
-    --arg position "$position" --argjson workspaces "$workspaces" '
+    --arg position "$position" --argjson workspaces "$workspaces" --argjson desktops "$desktops" --argjson leftIds "$left_widgets" '
     ($backup[0].layout // {}) as $old
     | ([($old.left // []), ($old.centerBegin // []), ($old.center // []), ($old.centerEnd // []), ($old.right // [])] | add) as $all
     | ([$all[] | select(.id == "omarchy.clock")][0] // {id: "omarchy.clock"}) as $clock
@@ -312,15 +316,20 @@ apply_taskbar() {
     | {id: $id, part: "start"} as $start
     | {id: $id, part: "apps"} as $apps
     | (if $workspaces then [$ws] else [] end) as $wsl
+    | (if $desktops then [{id: $id, part: "desktops"}] else [] end) as $desk
+    # Windows 11 keeps weather and the like at the left of the taskbar:
+    # these widgets go there, in this order, when the bar has them.
+    | (if $style == "classic" then [] else [$leftIds[] as $l | $rest[] | select(.id == $l)] end) as $leftWidgets
+    | [$rest[] | select(.id as $i | $leftWidgets | map(.id) | index($i) | not)] as $rightWidgets
     | ($clock + {format: "h:mm AP\nM/d/yyyy"}) as $taskbarClock
     | .bar = (($backup[0] // {}) + {
         position: $position,
         layout: {
-          left: (if $style == "classic" then [$start] + $wsl + [$apps] else $wsl end),
+          left: (if $style == "classic" then [$start] + $desk + $wsl + [$apps] else $wsl + $leftWidgets end),
           centerBegin: [],
-          center: (if $style == "classic" then [] else [$start, $apps] end),
+          center: (if $style == "classic" then [] else [$start] + $desk + [$apps] end),
           centerEnd: [],
-          right: ($rest + [$taskbarClock]),
+          right: ($rightWidgets + [$taskbarClock]),
           tray: ($old.tray // [])
         }
       })'

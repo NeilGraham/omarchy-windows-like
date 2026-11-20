@@ -20,6 +20,9 @@ artifacts = Path(sys.argv[2] if len(sys.argv) > 2 else '/tmp/owl-test-joint')
 
 GAPS_OUT, GAPS_IN, BORDER, BAR = 10, 5, 2, 30
 DX, DY = 80, 50
+# Where to grab a shared edge, from a window's content edge: on its border,
+# as the windows touch.
+AIM = BORDER // 2
 
 
 with Nested(artifacts) as n:
@@ -31,9 +34,9 @@ with Nested(artifacts) as n:
   win = {name: n.open_window(name)['address'] for name in names}
   monitor = json.loads(n.ctl('monitors', '-j'))[0]
   width, height = round(monitor['width'] / monitor['scale']), round(monitor['height'] / monitor['scale'])
-  x0, y0, x3, y3 = GAPS_OUT, GAPS_OUT, width - GAPS_OUT, height - GAPS_OUT
+  x0, y0, x3, y3 = 0, 0, width, height
   xm, ym = round((x0 + x3) / 2), round((y0 + y3) / 2)
-  half = GAPS_IN
+  half = 0  # snapped windows meet (snapping.gaps off)
 
   def place(addr, x1, y1, x2, y2):
     """A window's outer box (title bar and border included) at x1,y1-x2,y2."""
@@ -73,7 +76,7 @@ with Nested(artifacts) as n:
     n.ctl('dispatch', f'hl.dsp.window.alter_zorder({{ mode = "top", window = "address:{win[name]}" }})')
   time.sleep(.3)
   tl = box(win['tl'])
-  edge = (tl[0] + tl[2] + 4, ym)
+  edge = (tl[0] + tl[2] + AIM, ym)
   # The cursor on the shared edge, with the pointer drawn.
   n.pointer([f'move {edge[0] - 40} {edge[1]}', 'wait 60', f'move {edge[0]} {edge[1]}', 'wait 300'])
   subprocess.run(['grim', '-c', '-g', f'{edge[0] - 40},{edge[1] - 40} 80x80', str(artifacts / 'cursor-shared-edge.png')], env=n.env, check=False)
@@ -98,13 +101,13 @@ with Nested(artifacts) as n:
   place(win['bl'], x0, ym + half, xm - half, y3)
   place(win['br'], xm + half, ym + half, x3, y3)
   tl = box(win['tl'])
-  d = drag_line((tl[0] + tl[2] + 4, round((y0 + ym) / 2)), DX, 0)
+  d = drag_line((tl[0] + tl[2] + AIM, round((y0 + ym) / 2)), DX, 0)
   assert near(d['tl'], (0, 0, DX, 0)) and near(d['bl'], (0, 0, DX, 0)), ('left column', d)
   assert near(d['tr'], (DX, 0, -DX, 0)) and near(d['br'], (DX, 0, -DX, 0)), ('right column', d)
   print('PASS: the vertical line between four quarters moves all four', flush=True)
 
   tl = box(win['tl'])
-  d = drag_line((tl[0] + tl[2] // 2, tl[1] + tl[3] + 4), 0, DY)
+  d = drag_line((tl[0] + tl[2] // 2, tl[1] + tl[3] + AIM), 0, DY)
   assert near(d['tl'], (0, 0, 0, DY)) and near(d['bl'], (0, DY, 0, -DY)), ('left pair', d)
   assert d['tr'] == (0, 0, 0, 0) and d['br'] == (0, 0, 0, 0), ('the right pair moved', d)
   print('PASS: a horizontal line moves only the two windows it divides', flush=True)
@@ -128,7 +131,7 @@ with Nested(artifacts) as n:
   right = b[0] + b[2]
   # Squeeze the shared edge far past the minimum: the line stops there, and
   # the other window neither slides under it nor lets go of its right edge.
-  n.drag((a[0] + a[2] + 4, ym), (a[0] + a[2] - 400, ym), steps=16)
+  n.drag((a[0] + a[2] + AIM, ym), (a[0] + a[2] - 400, ym), steps=16)
   time.sleep(.4)
   a, b = pair()
   assert abs(a[2] - MINW) <= 2, ('stops at the minimum width', a)
@@ -141,7 +144,7 @@ with Nested(artifacts) as n:
   n.ctl('dispatch', f'hl.dsp.window.alter_zorder({{ mode = "top", window = "address:{ff}" }})')
   time.sleep(.3)
   a0, b0 = pair()
-  n.drag((a0[0] + a0[2] + 4, ym), (a0[0] + a0[2] + 4 + DX, ym), steps=12)
+  n.drag((a0[0] + a0[2] + AIM, ym), (a0[0] + a0[2] + AIM + DX, ym), steps=12)
   time.sleep(.4)
   a, b = pair()
   assert near((a[2] - a0[2], b[0] - b0[0], b[2] - b0[2]), (DX, DX, -DX)), ('the collapsed window moves both', a0, a, b0, b)
@@ -149,7 +152,7 @@ with Nested(artifacts) as n:
 
   # The other way: the neighbour shrinks to its own minimum and holds both.
   a0, b0 = pair()
-  n.drag((a0[0] + a0[2] + 4, ym), (b0[0] + b0[2] - 20, ym), steps=16)
+  n.drag((a0[0] + a0[2] + AIM, ym), (b0[0] + b0[2] - 20, ym), steps=16)
   time.sleep(.4)
   a, b = pair()
   assert b[2] >= 100 - 2 and b[0] - (a[0] + a[2]) == gap and b[0] + b[2] == right, ('held at the neighbour\'s minimum', a, b)
@@ -165,7 +168,7 @@ with Nested(artifacts) as n:
   n.ctl('dispatch', f'hl.dsp.window.alter_zorder({{ mode = "top", window = "address:{win["tr"]}" }})')
   time.sleep(.3)
   a0, b0 = pair()
-  n.drag((b0[0] - 4, ym), (b0[0] - 4 - 500, ym), steps=16)
+  n.drag((b0[0] - AIM, ym), (b0[0] - AIM - 500, ym), steps=16)
   time.sleep(.4)
   a, b = pair()
   assert abs(a[2] - MINW) <= 2 and b[0] - (a[0] + a[2]) == gap, ('the grabbed neighbour is held at the other\'s minimum', a, b)
@@ -173,7 +176,7 @@ with Nested(artifacts) as n:
   n.ctl('dispatch', f'hl.dsp.window.alter_zorder({{ mode = "top", window = "address:{ff}" }})')
   time.sleep(.3)
   a0, b0 = pair()
-  n.drag((a0[0] + a0[2] + 4, ym), (a0[0] + a0[2] + 4 + DX, ym), steps=12)
+  n.drag((a0[0] + a0[2] + AIM, ym), (a0[0] + a0[2] + AIM + DX, ym), steps=12)
   time.sleep(.4)
   a, b = pair()
   assert near((a[2] - a0[2], b[0] - b0[0]), (DX, DX)), ('then the collapsed window, focused, moves both', a0, a, b0, b)
@@ -190,7 +193,7 @@ with Nested(artifacts) as n:
   time.sleep(.3)
   behind0 = box(win['bl'])
   a0, b0 = pair()
-  n.drag((a0[0] + a0[2] + 4, ym), (a0[0] + a0[2] + 4 + DX, ym), steps=12)
+  n.drag((a0[0] + a0[2] + AIM, ym), (a0[0] + a0[2] + AIM + DX, ym), steps=12)
   time.sleep(.4)
   a, b = pair()
   assert near((a[2] - a0[2], b[0] - b0[0], b[2] - b0[2]), (DX, DX, -DX)), ('the neighbour, not the window behind it', a0, a, b0, b)
@@ -203,7 +206,7 @@ with Nested(artifacts) as n:
   n.ctl('eval', 'hl.config({ plugin = { windows_like = { joint_resize = 0 } } })')
   time.sleep(.3)
   tl = box(win['tl'])
-  d = drag_line((tl[0] + tl[2] + 4, round((y0 + ym) / 2)), -DX, 0)
+  d = drag_line((tl[0] + tl[2] + AIM, round((y0 + ym) / 2)), -DX, 0)
   assert near(d['tl'], (0, 0, -DX, 0)), ('the grabbed window', d)
   assert d['tr'] == d['bl'] == d['br'] == (0, 0, 0, 0), ('joint_resize = 0 moved others', d)
   print('PASS: joint_resize = 0 resizes one window at a time', flush=True)

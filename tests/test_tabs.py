@@ -306,7 +306,8 @@ with Nested(artifacts, extra_config=EXTRA, extra_env={'OMARCHY_WINDOWS_LIKE_NATI
   # size (the nested screen's scale can be fractional), rounding only edges.
   monitor = json.loads(n.ctl('monitors', '-j'))[0]
   width, height = monitor['width'] / monitor['scale'], monitor['height'] / monitor['scale']
-  border, bar, tab, gaps_out, gaps_in = 2, 30, 28, 10, 5
+  # Snapped windows meet each other and the screen's edges (snapping.gaps off).
+  border, bar, tab, gaps_out, gaps_in = 2, 30, 28, 0, 0
   right = round(gaps_out + (width - 2 * gaps_out) / 2 - gaps_in)
   bottom = round(gaps_out + height - 2 * gaps_out)
   want_at = [gaps_out + border, gaps_out + border + bar]

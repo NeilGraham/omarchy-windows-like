@@ -34,6 +34,11 @@ SettingsPage {
         description: qsTr("Drag a window's top or bottom border to the edge of the screen.")
     }
     SettingSwitch {
+        path: "snapping.gaps"
+        title: qsTr("Leave gaps between snapped windows")
+        description: qsTr("Off, snapped windows meet each other and the edges of the screen, as on Windows. On, they keep the gaps set in Hyprland.")
+    }
+    SettingSwitch {
         path: "snapping.restoreSize"
         title: qsTr("Restore the size when dragged away")
         description: qsTr("A snapped window dragged off its spot gets its old size back.")

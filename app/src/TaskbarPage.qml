@@ -35,9 +35,14 @@ SettingsPage {
         unit: "px"
     }
     SettingSwitch {
+        path: "taskbar.showDesktops"
+        title: qsTr("Show desktops")
+        description: qsTr("Next to Start: the number of the desktop you're on. Click it to switch desktops, add one, or rename them.")
+    }
+    SettingSwitch {
         path: "taskbar.showWorkspaces"
         title: qsTr("Show workspaces")
-        description: qsTr("Omarchy's workspace numbers, at the left of the taskbar.")
+        description: qsTr("Omarchy's row of workspace numbers, at the left of the taskbar. Desktops, next to Start, does the same job.")
     }
     SettingSwitch {
         path: "taskbar.showLabels"

@@ -11,14 +11,26 @@ without thinking.
 
 **A Windows 11 taskbar and Start menu** (or a classic Windows 10 layout).
 Omarchy's bar moves to the bottom (or stays at the top), grows to taskbar
-height, and is laid out like Windows: workspaces on the left, the Omarchy mark
-and your apps in the middle (classic: on the left), the tray and indicators on
-the right with a two-line clock last, whose calendar opens above it.
+height, and is laid out like Windows 11: weather, the world clock and Omarchy's indicators
+(passwordless sudo, screen recording, night light…) on the left, where
+Windows keeps its weather; the Omarchy mark, your desktops and your apps in
+the middle (classic: all on the left, as on Windows 10); the tray on the right
+with a two-line clock last, whose calendar opens above it. Which widgets go on
+the left is `taskbar.leftWidgets` in settings.json; Omarchy's own workspace
+numbers can come back there with *Show workspaces* in Settings.
 
 - App buttons show pinned and running apps, with Windows 11's line under a
   running app and a longer accent line under the focused one. Click to open,
   bring forward, minimize, or step through an app's windows; right-click to
   pin, open another window, or close.
+- **Desktops**, right of the Omarchy mark: the number of the desktop
+  (workspace) you're on. Click it for your desktops along the taskbar, each
+  a small picture of the screen: your background with every window where it
+  is, as it looks, and the app's icon on it. Click a desktop to go there, or
+  a window in one to go straight to that window; **+** for a new desktop,
+  and click a name (or right-click a desktop) to rename it, as on Windows.
+  The wheel steps through them. Names are kept in settings.json and apply to
+  that desktop on every monitor.
 - Drag an app button sideways to move it; the others make room. Pinned apps
   keep their new order (it is saved with the pins); a running app that isn't
   pinned keeps its place until the shell restarts, as on Windows.
@@ -54,6 +66,10 @@ Next to a window that stands the full height of the screen (one snapped and
 then resized, or one stretched from top to bottom), a snapped window fills the
 room beside it instead of exactly half — so a window stretched down the middle
 and two snapped to the sides stand three side by side.
+
+Snapped windows meet each other and the edges of the screen, with no gaps,
+as on Windows (`snapping.gaps`, *Leave gaps between snapped windows* in
+Settings, keeps Hyprland's gaps instead).
 
 A preview shows where the window will land before you let go. After a snap,
 **snap assist** offers your other windows for the rest of the layout (Tab to
@@ -120,8 +136,10 @@ folder while the shell waits, the program (`nvim README.md`, `ssh server`,
 
 **Super + Z** opens the layout picker for the focused window, like Win + Z.
 
-**Floating by default:** setup makes floating the default layout. Super + L
-still switches a single workspace to tiling or scrolling.
+**Floating by default:** setup (and `apply`) makes floating the default
+layout for every workspace, as windows behave on Windows. Super + L still
+switches a single workspace to tiling or scrolling; *Floating by default* in
+Settings turns it off.
 
 ## Install
 

@@ -88,6 +88,16 @@ with Nested(artifacts, extra_config=extra, extra_env={'OMARCHY_WINDOWS_LIKE_NATI
   n.ctl('dispatch', 'hl.dsp.event("windows-like-start-apps")')
   time.sleep(.6)
 
+  # Desktops, next to Start: one renamed, a second one with a window on it.
+  n.ctl('dispatch', 'hl.dsp.window.move({ workspace = "2", follow = false, window = "address:%s" })' % w2['address'])
+  settings.write_text(json.dumps(dict(json.loads(settings.read_text()), desktops={'names': {'1': 'Main'}})))
+  time.sleep(.8)
+  n.ctl('dispatch', 'hl.dsp.event("windows-like-desktops")')
+  time.sleep(1.2)
+  n.capture(f'{style}-{position}-desktops')
+  n.ctl('dispatch', 'hl.dsp.event("windows-like-desktops")')
+  time.sleep(.6)
+
   # Right-click an app button (the middle of the bar, just right of Start)
   # for its menu; every row must show.
   width, height = n.size()

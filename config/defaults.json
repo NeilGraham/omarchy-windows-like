@@ -4,7 +4,9 @@
     "style": "windows11",
     "position": "bottom",
     "height": 44,
-    "showWorkspaces": true,
+    "showWorkspaces": false,
+    "showDesktops": true,
+    "leftWidgets": ["omarchy.weather", "omarchy.elsewhen", "omarchy.indicators"],
     "showLabels": false
   },
   "start": {
@@ -21,7 +23,8 @@
     "picker": true,
     "assist": true,
     "stretch": true,
-    "restoreSize": true
+    "restoreSize": true,
+    "gaps": false
   },
   "resizing": {
     "sides": true,

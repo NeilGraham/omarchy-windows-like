@@ -16,12 +16,14 @@ plugin = Path(sys.argv[1]).resolve()
 artifacts = Path(sys.argv[2] if len(sys.argv) > 2 else '/tmp/owl-test-snapping')
 
 GAPS_OUT, GAPS_IN, BORDER, BAR = 10, 5, 2, 30
+# Snapped windows meet each other and the screen's edges (snapping.gaps off).
+SNAP_OUT, SNAP_IN = 0, 0
 
 
 def zone(fx, fy, fw, fh):
   """The client box (at, size) a zone should give a window with a title bar."""
   ax, ay, aw, ah = AREA
-  half = GAPS_IN
+  half = SNAP_IN
   x1 = ax + fx * aw + (half if fx > 0.001 else 0)
   x2 = ax + (fx + fw) * aw - (half if fx + fw < 0.999 else 0)
   y1 = ay + fy * ah + (half if fy > 0.001 else 0)
@@ -74,7 +76,7 @@ with Nested(artifacts) as n:
   n.ctl('dispatch', f'hl.dsp.window.tag({{ tag = "+omarchy-floating-workspace", window = "address:{addr}" }})')
   n.start_shell(HERE.parent / 'WindowsLike.qml')
   WIDTH, HEIGHT = n.size()
-  AREA = (GAPS_OUT, GAPS_OUT, WIDTH - 2 * GAPS_OUT, HEIGHT - 2 * GAPS_OUT)
+  AREA = (SNAP_OUT, SNAP_OUT, WIDTH - 2 * SNAP_OUT, HEIGHT - 2 * SNAP_OUT)
   n.ipc('assist', 'off')
   state = n.ipc('state')
   assert state['hasTitleBars'] and state['barHeight'] == BAR and state['gapsOut'] == GAPS_OUT, state
@@ -175,7 +177,7 @@ with Nested(artifacts) as n:
   assert state['mode'] == 'assist', state
   n.capture('snap assist')
   # The first tile of the assist panel in the right half.
-  rx = AREA[0] + AREA[2] / 2 + GAPS_IN
+  rx = AREA[0] + AREA[2] / 2 + SNAP_IN
   rw = AREA[0] + AREA[2] - rx
   columns = max(1, int((rw - 20) // 210))
   cell_w = (rw - 20) // columns
@@ -192,5 +194,20 @@ with Nested(artifacts) as n:
   assert not (r > 150 and g < 60 and b < 60), ('the covering window is still on top', (r, g, b))
   assert json.loads(n.ctl('activewindow', '-j'))['address'] == addr2, 'the picked window should have focus'
   print('PASS: the window picked by snap assist comes to the front', flush=True)
+
+  # snapping.gaps brings back Hyprland's gaps around snapped windows.
+  n.ipc('assist', 'off')
+  n.settings_json.write_text(json.dumps({'snapping': {'gaps': True}}))
+  time.sleep(.6)
+  SNAP_OUT, SNAP_IN = GAPS_OUT, GAPS_IN
+  AREA = (SNAP_OUT, SNAP_OUT, WIDTH - 2 * SNAP_OUT, HEIGHT - 2 * SNAP_OUT)
+  # The second window out of the right half (and from over the first), so
+  # the left one is a plain half.
+  reset(n, addr2)
+  n.ctl('dispatch', f'hl.dsp.window.move({{ x = 600, y = 380, window = "address:{addr2}" }})')
+  w = reset(n, addr)
+  n.drag(grab(w), (0, 400))
+  at, size = zone(0, 0, .5, 1)
+  check('snapping.gaps = true -> the left half inside the gaps', n, addr, want_at=at, want_size=size)
 
   print('ALL PASS', flush=True)

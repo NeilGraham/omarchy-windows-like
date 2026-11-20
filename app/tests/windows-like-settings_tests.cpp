@@ -210,9 +210,9 @@ private slots:
         // config/defaults.json in this repository: every switch the app shows exists.
         const QJsonObject defaults = read(QStringLiteral(SRCDIR "/../../config/defaults.json"));
         for (const QString path : {"taskbar.enabled", "taskbar.style", "taskbar.position", "taskbar.height",
-                                   "taskbar.showWorkspaces", "taskbar.showLabels", "start.superOpens", "start.showRecent",
+                                   "taskbar.showWorkspaces", "taskbar.showDesktops", "taskbar.showLabels", "start.superOpens", "start.showRecent",
                                    "start.showRecentlyInstalled", "snapping.edges", "snapping.corners", "snapping.fillSpace", "snapping.topMaximizes",
-                                   "snapping.picker", "snapping.assist", "snapping.stretch", "snapping.restoreSize",
+                                   "snapping.picker", "snapping.assist", "snapping.stretch", "snapping.restoreSize", "snapping.gaps",
                                    "resizing.sides", "resizing.joint", "tabs.enabled", "tabs.terminalShortcuts", "tabs.terminalNames",
                                    "general.floatingDefault", "general.superZ", "animations.enabled"})
             QVERIFY2(!Backend::valueAt(defaults, path).isUndefined(), qPrintable(path));

@@ -17,7 +17,8 @@ plugin = Path(sys.argv[1]).resolve()
 artifacts = Path(sys.argv[2] if len(sys.argv) > 2 else '/tmp/owl-test-snap-fill')
 
 GAPS_OUT, GAPS_IN, BORDER, BAR = 10, 5, 2, 30
-GAP = 2 * GAPS_IN  # between snapped windows
+# Snapped windows meet each other and the screen's edges (snapping.gaps off).
+SNAP_OUT, GAP = 0, 0
 
 
 def wait_for(fn, timeout=4, what='condition'):
@@ -45,7 +46,7 @@ with Nested(artifacts) as n:
   n.ipc('assist', 'off')
   monitor = json.loads(n.ctl('monitors', '-j'))[0]
   width, height = monitor['width'] / monitor['scale'], monitor['height'] / monitor['scale']
-  area = (GAPS_OUT, GAPS_OUT, width - 2 * GAPS_OUT, height - 2 * GAPS_OUT)
+  area = (SNAP_OUT, SNAP_OUT, width - 2 * SNAP_OUT, height - 2 * SNAP_OUT)
   left_edge, right_edge = area[0], round(area[0] + area[2])
 
   def outer(addr):
@@ -106,7 +107,7 @@ with Nested(artifacts) as n:
   park(windows['c'])
   park(windows['b'])
   park(windows['a'])
-  half_right = round(area[0] + area[2] / 2 - GAPS_IN)
+  half_right = round(area[0] + area[2] / 2 - GAP / 2)
   a = snap(windows['a'], 'left')
   assert near(a, (left_edge, top, half_right, bottom)), ('a plain half', a, half_right)
   print('PASS: other windows that are not full height leave the plain half', flush=True)

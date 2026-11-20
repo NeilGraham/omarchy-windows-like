@@ -14,6 +14,9 @@ import "TaskbarModel.js" as Model
 //   start - the Omarchy mark; opens the start menu. Tapping Super (or
 //           Super + Alt + Space for All apps) opens the one on the focused
 //           monitor.
+//   desktops - right of Start: the number of the desktop (workspace) shown,
+//           which opens the desktops to switch to, rename or add one
+//           (Desktops.qml).
 //   apps  - pinned and running apps, one button per app, with Windows 11's
 //           running/active lines underneath. Click to launch, bring forward,
 //           minimize, or step through an app's windows; right-click for
@@ -33,7 +36,7 @@ BarWidget {
     id: cfg
   }
 
-  implicitWidth: part === "start" ? slot : appsRow.implicitWidth
+  implicitWidth: part === "start" || part === "desktops" ? slot : appsRow.implicitWidth
   implicitHeight: barSize
 
   // ---------- Which monitor, which workspace ----------
@@ -431,6 +434,18 @@ BarWidget {
       host: root
       view: root.menuView
       recents: root.recents
+    }
+  }
+
+  // ---------- Desktops ----------
+
+  Loader {
+    active: root.part === "desktops"
+    anchors.centerIn: parent
+    sourceComponent: Desktops {
+      host: root
+      settings: cfg
+      slot: root.slot
     }
   }
 

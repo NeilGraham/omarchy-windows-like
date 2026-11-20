@@ -82,7 +82,11 @@ Item {
     // The tab bar the native plugin draws on a window with tabs but no title bar
     // (with a title bar, the tabs sit in it).
     property int tabBarHeight: 0
-    readonly property int innerGap: 2 * gapsIn
+    // Snapped windows meet each other and the screen's edges, as on Windows;
+    // snapping.gaps keeps Hyprland's gaps between them instead.
+    readonly property bool snapGaps: wl.get("snapping.gaps", false) === true
+    readonly property int snapGapOut: snapGaps ? gapsOut : 0
+    readonly property int innerGap: snapGaps ? 2 * gapsIn : 0
     // Omarchy's title bars draw on windows with this tag only.
     readonly property string floatingTag: "omarchy-floating-workspace"
 
@@ -177,14 +181,16 @@ Item {
         return false;
     }
 
-    // The usable area of a monitor, inside the bar and the outer gaps.
+    // The area snapped windows fill: inside the bar, and inside the outer
+    // gaps when snapping.gaps is on.
     function workArea(m) {
         var r = m.reserved;
+        var g = root.snapGapOut;
         return {
-            x: m.x + r[0] + root.gapsOut,
-            y: m.y + r[1] + root.gapsOut,
-            w: m.w - r[0] - r[2] - 2 * root.gapsOut,
-            h: m.h - r[1] - r[3] - 2 * root.gapsOut
+            x: m.x + r[0] + g,
+            y: m.y + r[1] + g,
+            w: m.w - r[0] - r[2] - 2 * g,
+            h: m.h - r[1] - r[3] - 2 * g
         };
     }
 
@@ -589,12 +595,29 @@ Item {
             root.maximize(address);
         } else if (t.type === "vmax") {
             root.placeOuter(address, t.rect);
+            // Hyprland finishes a border drag after the drop and can leave the
+            // window a pixel taller: with no gap below, under the taskbar.
+            // Place it again once it has.
+            root.stretchAgain = { address: address, rect: t.rect };
+            stretchTimer.restart();
         } else if (t.rect) {
             // Fitted beside other windows: no layout for snap assist to fill.
             root.placeOuter(address, t.rect, m.workspaceId);
         } else {
             root.targetAddress = address;
             root.chooseZone(t.layout, t.zone);
+        }
+    }
+
+    property var stretchAgain: null
+    Timer {
+        id: stretchTimer
+        interval: 150
+        onTriggered: {
+            var s = root.stretchAgain;
+            root.stretchAgain = null;
+            if (s && !root.dragActive)
+                root.placeOuter(s.address, s.rect);
         }
     }
 
