@@ -1,5 +1,5 @@
 // windows-like-settings — Settings, laid out like Windows 11's: the displays
-// (with the way into the Displays app), and what omarchy-windows-like
+// (arranged and set up on one page, as Windows does), and what omarchy-windows-like
 // changes: the taskbar and Start, snapping, tabs, and more.
 //
 // `windows-like-settings --this-pc` is This PC instead: folders, drives and

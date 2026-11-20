@@ -1,3 +1,10 @@
 {
-  "%n display(s) connected": { "one": "%n display connected", "other": "%n displays connected" }
+  "%n display(s) connected": {
+    "one": "%n display connected",
+    "other": "%n displays connected"
+  },
+  "Reverting to the previous display settings in %n second(s).": {
+    "one": "Reverting to the previous display settings in %n second.",
+    "other": "Reverting to the previous display settings in %n seconds."
+  }
 }

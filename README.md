@@ -44,7 +44,11 @@ numbers can come back there with *Show workspaces* in Settings.
   never end up behind it. Omarchy's dock steps aside while the taskbar is on.
 
 **Settings**, an app in the launcher laid out like Windows 11's, turns each
-part on or off under **Package**, and sums up your monitors under **Display**.
+part on or off under **Package**, and sets up your monitors under **Display**
+the way Windows does, all on one page: arrange them by dragging, extend,
+duplicate or turn them off, and change scale, resolution, orientation,
+refresh rate, variable refresh rate, HDR and color, with *Keep these display
+settings?* for anything that could leave a screen blank.
 **This PC** shows your folders, drives and network locations with the space
 free on each, like Windows' This PC, and opens them in Files (which gets a
 *This PC* item in its right-click menu). Both come in one package (see

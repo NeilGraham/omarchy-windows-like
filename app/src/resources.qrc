@@ -2,6 +2,7 @@
     <qresource prefix="/">
         <file alias="Main.qml">Main.qml</file>
         <file alias="DisplayPage.qml">DisplayPage.qml</file>
+        <file alias="DisplayLayout.js">DisplayLayout.js</file>
         <file alias="Icon.qml">Icon.qml</file>
         <file alias="Icons.js">Icons.js</file>
         <file alias="LinkCard.qml">LinkCard.qml</file>

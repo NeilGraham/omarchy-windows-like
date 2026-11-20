@@ -4,12 +4,40 @@ Settings laid out like Windows 11's: a search box and the categories down the
 left, the current page on the right under a large title, its settings in
 cards.
 
-- **Display** shows the monitors Hyprland sees (`hyprctl monitors all -j`):
-  where they stand, and each one's name, connector, resolution, refresh rate
-  and scale. When the separate Displays app (`displays`) is installed, *Open
-  Displays* brings it forward or starts it (`omarchy-launch-or-focus displays
-  'uwsm-app -- displays'`) to change them. Without it the summary stays, and
-  the page says where Hyprland takes the settings from instead.
+- **Display** is Windows' display settings, with everything on one page (no
+  advanced settings behind another):
+  - **The arrangement**: your displays where they stand, numbered. Click one
+    to change its settings; drag one to move it, and it lands against the
+    side of the nearest display, lined up with its edge. Displays that are
+    off sit smaller and greyed under *Off*; a duplicate shares its picture
+    ("1 | 2"). *Detect* asks Hyprland again.
+  - **Multiple displays**, for the display picked: extend the desktop to it,
+    duplicate another display on it, show only on it, or disconnect it (never
+    the last one on). Turning a display off or making it a copy closes the
+    gap it leaves.
+  - **Scale & layout**: scale (with Windows' suggestion from the display's
+    size), resolution, and orientation. A display that changes size moves the
+    ones beside it, so they still touch.
+  - **Refresh rate & color**: refresh rate, variable refresh rate (off, on,
+    or only for full screen apps), HDR (with where its brightness range comes
+    from, and SDR content brightness and color saturation), the color profile
+    when HDR is off (sRGB, the display's own EDID, wide color, DCI-P3, Display
+    P3, Adobe RGB), and 10-bit color.
+  - **Display information**: manufacturer, model, serial number, connector,
+    size, mode, desktop size, position, color format, bit depth, color space
+    and whether variable refresh rate is active.
+
+  Changes apply at once (`hyprctl eval 'hl.monitor({ … })'`). One that can
+  leave a screen blank (resolution, refresh rate, orientation, HDR and color,
+  turning a display on, off or into a copy) asks *Keep these display
+  settings?*, and goes back by itself after 15 seconds, as on Windows; closing
+  Settings meanwhile goes back too. Kept changes are saved to
+  `~/.config/hypr/monitors.lua`, in the block the Displays app keeps there
+  (`-- BEGIN Displays` … `-- END Displays`), one rule per display, by its
+  description, so it follows the display from port to port. Only the displays
+  changed are rewritten, the rest of the file stays as it was, and a copy of
+  the file is kept first (`monitors.lua.bak.<date>`). Each rule says every
+  setting, since Hyprland keeps any a rule leaves out from the one before.
 - **Package** chooses what [omarchy-windows-like](../README.md) changes, a
   page for each part: **Taskbar & Start** (Windows 11 or classic, bottom or
   top, height, workspaces, Super opening Start, pinned apps), **Snapping**
@@ -98,11 +126,14 @@ In This PC:
 
 ```sh
 bin/build    # build/windows-like-settings
-bin/test     # Qt tests, offscreen (fake lsblk, udisksctl and the rest: no real drive is touched)
+bin/test     # Qt tests, offscreen (fake hyprctl, lsblk, udisksctl and the rest: no real display or drive is touched)
 ```
 
 C++ reads and writes the settings and runs `apply` (`src/backend.*`), asks
-Hyprland about the monitors and opens Displays (`src/monitors.*`), and finds
+Hyprland about the monitors, sets them, and saves their rules
+(`src/monitors.*`; the arrangement arithmetic, snapping a dragged display and
+what each multiple-displays choice sets, is `src/DisplayLayout.js`, which the
+tests run too), and finds
 This PC's drives (`src/drives.*`: `lsblk -J` for the drives, which gives the
 whole disk, partition, LUKS and LVM tree with labels, partition types, mount
 points and space in one call and is easy to test against canned output in

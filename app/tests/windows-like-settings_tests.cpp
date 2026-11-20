@@ -223,13 +223,13 @@ private slots:
     void monitorsAreSummedUp()
     {
         const QVariantList list = Monitors::parse(R"([
-            {"name": "DP-2", "description": "Samsung Electric Company Odyssey G95NC HNTWB00286",
+            {"id": 0, "name": "DP-2", "description": "Samsung Electric Company Odyssey G95NC HNTWB00286",
              "make": "Samsung Electric Company", "model": "Odyssey G95NC", "width": 7680, "height": 2160,
              "refreshRate": 239.99001, "x": 0, "y": 0, "scale": 1.5, "transform": 0, "focused": true,
              "disabled": false, "mirrorOf": "none"},
             {"name": "eDP-1", "description": "BOE 0x0BCA", "make": "BOE", "model": "0x0BCA", "width": 2880,
              "height": 1800, "refreshRate": 120.0, "x": 5120, "y": 0, "scale": 2, "transform": 1,
-             "disabled": false, "mirrorOf": "DP-2"},
+             "disabled": false, "mirrorOf": "0"},
             {"name": "HEADLESS-1", "description": "", "width": 1920, "height": 1080, "refreshRate": 60,
              "scale": 0, "disabled": true},
             {"description": "no name, so not a monitor"}
@@ -242,7 +242,8 @@ private slots:
         QCOMPARE(big.value("logicalWidth").toInt(), 5120);
         QCOMPARE(big.value("mirrorOf").toString(), QString());
         QVERIFY(big.value("focused").toBool());
-        // Built in, turned a quarter, and mirroring the other one.
+        // Built in, turned a quarter, and mirroring the other one (which
+        // Hyprland names by its id).
         QCOMPARE(laptop.value("label").toString(), QString("Built-in display"));
         QVERIFY(laptop.value("builtIn").toBool());
         QCOMPARE(laptop.value("logicalWidth").toInt(), 900);
@@ -252,6 +253,9 @@ private slots:
         QCOMPARE(headless.value("label").toString(), QString("HEADLESS-1"));
         QCOMPARE(headless.value("scalePercent").toInt(), 100);
         QVERIFY(headless.value("disabled").toBool());
+        // Rules are for the description, which follows a display between ports.
+        QCOMPARE(big.value("output").toString(), QString("desc:Samsung Electric Company Odyssey G95NC HNTWB00286"));
+        QCOMPARE(headless.value("output").toString(), QString("HEADLESS-1"));
 
         QVERIFY(Monitors::parse("not json").isEmpty());
         QVERIFY(Monitors::parse("{\"name\": \"DP-1\"}").isEmpty());
@@ -263,7 +267,7 @@ private slots:
         const QString hyprctl = script(dir, "hyprctl", "echo \"$*\" > '" + dir.filePath("args.txt") + "'\n"
                                        "echo '[{\"name\": \"DP-1\", \"model\": \"U2720Q\", \"width\": 3840, "
                                        "\"height\": 2160, \"refreshRate\": 59.997, \"scale\": 1.5}]'\n");
-        Monitors monitors(hyprctl, dir.filePath("nowhere"), dir.filePath("nowhere"));
+        Monitors monitors(hyprctl, dir.filePath("monitors.lua"));
         QTRY_VERIFY(monitors.available());
         QCOMPARE(monitors.monitors().size(), 1);
         QCOMPARE(monitors.monitors()[0].toMap().value("label").toString(), QString("U2720Q"));
@@ -278,34 +282,234 @@ private slots:
     {
         QTemporaryDir dir;
         Monitors monitors(script(dir, "hyprctl", "echo 'HYPRLAND_INSTANCE_SIGNATURE not set' >&2\nexit 1\n"),
-                          dir.filePath("nowhere"), dir.filePath("nowhere"));
+                          dir.filePath("monitors.lua"));
         QTRY_VERIFY(!monitors.error().isEmpty());
         QVERIFY(!monitors.available());
         QVERIFY(monitors.monitors().isEmpty());
     }
 
-    void displaysOpensOnlyWhenInstalled()
+    void modesAndColorAreRead()
+    {
+        const QVariantList list = Monitors::parse(R"([
+            {"name": "DP-1", "description": "Dell U2720Q", "width": 3840, "height": 2160, "refreshRate": 59.997,
+             "scale": 1.5, "vrr": false, "currentFormat": "XRGB2101010", "colorManagementPreset": "hdr",
+             "sdrBrightness": 1.2, "sdrSaturation": 1.05, "physicalWidth": 600, "physicalHeight": 340,
+             "availableModes": ["1920x1080@60.00Hz", "3840x2160@60.00Hz", "3840x2160@30.00Hz", "1920x1080@60.00Hz"]},
+            {"name": "DP-2", "description": "LG 27GP850", "disabled": true, "width": 0, "height": 0,
+             "availableModes": ["2560x1440@165.00Hz", "2560x1440@60.00Hz"]}
+        ])", Monitors::savedRules(R"(
+-- BEGIN Displays
+hl.monitor({ output = "desc:Dell U2720Q", mode = "3840x2160@60.00", position = "0x0", scale = 1.5, vrr = 2, bitdepth = 10, cm = "hdredid", sdrbrightness = 1.2, sdrsaturation = 1.05 })
+hl.monitor({ output = "desc:LG 27GP850", mode = "2560x1440@60.00", position = "2560x0", scale = 1, transform = 1 })
+-- END Displays
+)"));
+        QCOMPARE(list.size(), 2);
+        const QVariantMap dell = list[0].toMap(), lg = list[1].toMap();
+        // Each mode once, biggest and fastest first.
+        QCOMPARE(dell.value("modes").toList().size(), 3);
+        QCOMPARE(dell.value("modes").toList()[0].toMap().value("width").toInt(), 3840);
+        QCOMPARE(dell.value("modes").toList()[0].toMap().value("refresh").toDouble(), 60.0);
+        QCOMPARE(dell.value("modes").toList()[1].toMap().value("refresh").toDouble(), 30.0);
+        QCOMPARE(dell.value("bitdepth").toInt(), 10);
+        // What Hyprland doesn't say comes from the saved rule: VRR for
+        // fullscreen only, and HDR from the display's own data.
+        const QVariantMap c = dell.value("config").toMap();
+        QCOMPARE(c.value("vrr").toInt(), 2);
+        QCOMPARE(c.value("cm").toString(), QString("hdredid"));
+        QCOMPARE(c.value("sdrBrightness").toDouble(), 1.2);
+        // Off, it remembers how it was last set up.
+        const QVariantMap off = lg.value("config").toMap();
+        QVERIFY(!off.value("enabled").toBool());
+        QCOMPARE(off.value("width").toInt(), 2560);
+        QCOMPARE(off.value("refresh").toDouble(), 60.0);
+        QCOMPARE(off.value("x").toInt(), 2560);
+        QCOMPARE(off.value("transform").toInt(), 1);
+    }
+
+    void rulesSayWhatIsSet()
+    {
+        QVariantMap c{{"output", "desc:Dell U2720Q"}, {"name", "DP-1"}, {"enabled", true}, {"width", 3840},
+                      {"height", 2160}, {"refresh", 59.997}, {"x", -1920}, {"y", 0}, {"scale", 1.5},
+                      {"transform", 1}, {"mirror", ""}, {"vrr", 2}, {"bitdepth", 10}, {"cm", "hdr"},
+                      {"sdrBrightness", 1.25}, {"sdrSaturation", 1.0}};
+        QCOMPARE(Monitors::rule(c), QString("hl.monitor({ output = \"desc:Dell U2720Q\", disabled = false, "
+                                            "mode = \"3840x2160@60.00\", position = \"-1920x0\", scale = 1.5, transform = 1, "
+                                            "mirror = \"\", vrr = 2, bitdepth = 10, cm = \"hdr\", sdrbrightness = 1.25, "
+                                            "sdrsaturation = 1 })"));
+        // Every field is said, as Hyprland keeps any left out from the rule before.
+        c["cm"] = "";
+        c["bitdepth"] = 8;
+        c["transform"] = 0;
+        c["mirror"] = "DP-2";
+        QCOMPARE(Monitors::rule(c), QString("hl.monitor({ output = \"desc:Dell U2720Q\", disabled = false, "
+                                            "mode = \"3840x2160@60.00\", position = \"-1920x0\", scale = 1.5, transform = 0, "
+                                            "mirror = \"DP-2\", vrr = 2, bitdepth = 8, cm = \"auto\", sdrbrightness = 1.25, "
+                                            "sdrsaturation = 1 })"));
+        c["enabled"] = false;
+        QCOMPARE(Monitors::rule(c), QString("hl.monitor({ output = \"desc:Dell U2720Q\", disabled = true })"));
+        // Quotes in a description can't end the string.
+        c["output"] = "desc:Odd \"name\"";
+        QVERIFY(Monitors::rule(c).contains("output = \"desc:Odd \\\"name\\\"\""));
+    }
+
+    void theDisplaysBlockKeepsTheRest()
+    {
+        const QString file = "local scale = 1.5\n"
+                             "hl.monitor({ output = \"\", mode = \"preferred\", position = \"auto\", scale = scale })\n"
+                             "-- BEGIN Displays (written by the Displays app: Setup > Display in the Omarchy menu)\n"
+                             "-- Changes here are overwritten the next time Displays saves.\n"
+                             "hl.monitor({ output = \"desc:A\", mode = \"1920x1080@60.00\", position = \"0x0\", scale = 1 })\n"
+                             "hl.monitor({ output = \"desc:B\", mode = \"2560x1440@60.00\", position = \"1920x0\", scale = 1 })\n"
+                             "-- END Displays\n"
+                             "hl.env(\"GDK_SCALE\", \"2\")\n";
+        const QString after = Monitors::withRules(file, {{"desc:B", "hl.monitor({ output = \"desc:B\", disabled = true })"},
+                                                         {"C-1", "hl.monitor({ output = \"C-1\", mode = \"preferred\" })"}});
+        // B is replaced where it was, C is added, and A and everything around stay.
+        QCOMPARE(after, QString("local scale = 1.5\n"
+                                "hl.monitor({ output = \"\", mode = \"preferred\", position = \"auto\", scale = scale })\n"
+                                "-- BEGIN Displays (written by the Displays app: Setup > Display in the Omarchy menu)\n"
+                                "-- Changes here are overwritten the next time Displays saves.\n"
+                                "hl.monitor({ output = \"desc:A\", mode = \"1920x1080@60.00\", position = \"0x0\", scale = 1 })\n"
+                                "hl.monitor({ output = \"desc:B\", disabled = true })\n"
+                                "hl.monitor({ output = \"C-1\", mode = \"preferred\" })\n"
+                                "-- END Displays\n"
+                                "hl.env(\"GDK_SCALE\", \"2\")\n"));
+        QCOMPARE(Monitors::savedRules(after).value("desc:B").value("disabled").toString(), QString("true"));
+        // Rules outside the block aren't the block's.
+        QVERIFY(!Monitors::savedRules(after).contains(""));
+
+        // A file without the block gets one at the end.
+        const QString fresh = Monitors::withRules("hl.monitor({ output = \"\", mode = \"preferred\" })", {{"DP-1", "hl.monitor({ output = \"DP-1\", disabled = true })"}});
+        QVERIFY(fresh.startsWith("hl.monitor({ output = \"\", mode = \"preferred\" })\n\n-- BEGIN Displays"));
+        QVERIFY(fresh.endsWith("hl.monitor({ output = \"DP-1\", disabled = true })\n-- END Displays\n"));
+        QCOMPARE(Monitors::savedRules(fresh).size(), 1);
+    }
+
+    void changesAreTriedThenKeptOrPutBack()
     {
         QTemporaryDir dir;
-        const QString hyprctl = script(dir, "hyprctl", "echo '[]'\n");
-        const QString launcher = script(dir, "launcher", "printf '%s\\n' \"$@\" > '" + dir.filePath("launched.txt") + "'\n");
+        const QString log = dir.filePath("log.txt");
+        // hyprctl: every call logged; the monitors as they were.
+        const QString hyprctl = script(dir, "hyprctl",
+            "printf '%s\\n' \"$*\" >> '" + log + "'\n"
+            "case \"$1\" in\n"
+            "  monitors) echo '[{\"name\": \"DP-1\", \"description\": \"Dell\", \"width\": 1920, \"height\": 1080, "
+            "\"refreshRate\": 60, \"scale\": 1, \"availableModes\": [\"1920x1080@60.00Hz\", \"1280x720@60.00Hz\"]}]' ;;\n"
+            "  eval) echo ok ;;\n"
+            "  reload) echo ok ;;\n"
+            "esac\n");
+        const QString lua = dir.filePath("monitors.lua");
+        write(lua, "hl.monitor({ output = \"\", mode = \"preferred\" })\n");
+        Monitors monitors(hyprctl, lua);
+        QTRY_VERIFY(monitors.available());
+        auto lines = [&] { return QString::fromUtf8(readBytes(log)).trimmed().split('\n'); };
+        // The rules run, without the asking for monitors in between.
+        auto evals = [&] { return lines().filter(QRegularExpression("^eval ")); };
+        QVariantMap c = monitors.monitors()[0].toMap().value("config").toMap();
+        const QString before = Monitors::rule(c);
+        c["width"] = 1280;
+        c["height"] = 720;
 
-        // Not installed: no button, and nothing runs.
-        Monitors without(hyprctl, dir.filePath("displays"), launcher);
-        QVERIFY(!without.displaysInstalled());
-        QVERIFY(!without.openDisplays());
-        QTest::qWait(200);
-        QVERIFY(!QFileInfo::exists(dir.filePath("launched.txt")));
+        // Tried, and waiting: nothing saved yet.
+        QVERIFY(monitors.apply({c}, true));
+        QVERIFY(monitors.confirming());
+        QCOMPARE(monitors.secondsLeft(), 15);
+        QVERIFY(lines().contains("eval " + Monitors::rule(c)));
+        QVERIFY(!QString::fromUtf8(readBytes(lua)).contains("1280x720"));
+        // Put back: the rule from before runs, still nothing saved.
+        monitors.revert();
+        QVERIFY(!monitors.confirming());
+        QCOMPARE(evals().last(), "eval " + before);
+        QVERIFY(!QString::fromUtf8(readBytes(lua)).contains("1280x720"));
 
-        // Installed: omarchy-launch-or-focus finds its window or starts it.
-        const QString displays = script(dir, "displays", "exit 0\n");
-        Monitors with(hyprctl, displays, launcher);
-        QVERIFY(with.displaysInstalled());
-        QVERIFY(with.openDisplays());
-        auto args = [&] { return QString::fromUtf8(readBytes(dir.filePath("launched.txt"))).trimmed().split('\n'); };
-        QTRY_COMPARE(args().size(), 2);
-        QCOMPARE(args()[0], QString("displays"));
-        QVERIFY2(args()[1].endsWith("'" + displays + "'"), qPrintable(args()[1]));
+        // Kept: saved in the block, with a copy of the file first. Hyprland
+        // isn't made to reload, which would undo other live changes.
+        QVERIFY(monitors.apply({c}, true));
+        monitors.keep();
+        QVERIFY(!monitors.confirming());
+        QVERIFY(QString::fromUtf8(readBytes(lua)).contains("-- BEGIN Displays"));
+        QVERIFY(QString::fromUtf8(readBytes(lua)).contains(Monitors::rule(c)));
+        QVERIFY(QString::fromUtf8(readBytes(lua)).startsWith("hl.monitor({ output = \"\", mode = \"preferred\" })\n"));
+        QCOMPARE(QDir(dir.path()).entryList({"monitors.lua.bak.*"}).size(), 1);
+        QVERIFY(!lines().contains("reload"));
+
+        // Not answered in time, it goes back by itself (to what the fake
+        // Hyprland still says it has).
+        monitors.confirmSeconds = 1;
+        c["refresh"] = 75;
+        QVERIFY(monitors.apply({c}, true));
+        QCOMPARE(evals().last(), "eval " + Monitors::rule(c));
+        QTRY_VERIFY_WITH_TIMEOUT(!monitors.confirming(), 3000);
+        QCOMPARE(evals().last(), "eval " + before);
+
+        // Hyprland refusing: said, and put back.
+        const QString refusing = script(dir, "hyprctl-refusing",
+            "case \"$1\" in monitors) echo '[{\"name\": \"DP-1\", \"width\": 1920, \"height\": 1080}]' ;; "
+            "eval) echo 'error: bad mode' ;; esac\n");
+        Monitors stubborn(refusing, lua);
+        QTRY_VERIFY(stubborn.available());
+        QVERIFY(!stubborn.apply({c}, true));
+        QVERIFY(!stubborn.confirming());
+        QVERIFY(stubborn.applyError().contains("bad mode"));
+    }
+
+    void displaysLineUpLikeWindows()
+    {
+        // DisplayLayout.js, as the page runs it.
+        QString code = QString::fromUtf8(readBytes(QStringLiteral(SRCDIR "/../src/DisplayLayout.js")));
+        code.remove(".pragma library");
+        QJSEngine js;
+        const QJSValue loaded = js.evaluate(code);
+        QVERIFY2(!loaded.isError(), qPrintable(loaded.toString()));
+        auto run = [&](const QString &expr) {
+            const QJSValue v = js.evaluate(expr);
+            if (v.isError())
+                qWarning() << v.toString();
+            return v;
+        };
+        run(R"(
+            var mk = (name, x, w, h, extra) => ({ name: name, config: Object.assign({ output: name, name: name,
+                enabled: true, width: w, height: h, refresh: 60, x: x, y: 0, scale: 1, transform: 0, mirror: "",
+                vrr: 0, bitdepth: 8, cm: "auto" }, extra || {}) });
+            var three = [mk("A", 0, 1920, 1080), mk("B", 1920, 2560, 1440), mk("C", 4480, 1920, 1080, { enabled: false })];
+        )");
+        // A display that gets bigger pushes the one to its right along.
+        QCOMPARE(run("JSON.stringify(change(three, 'A', { width: 2560, height: 1440 }).map(c => [c.name, c.x]))").toString(),
+                 QString("[[\"A\",0],[\"B\",2560]]"));
+        // Turned a quarter, it stands upright and B moves in.
+        QCOMPARE(run("change(three, 'A', { transform: 1 }).find(c => c.name === 'B').x").toInt(), 1080);
+        // Dropped over B's right half, A lands against its right side, lined
+        // up with its top; dropped high on the left, above it.
+        QCOMPARE(run("JSON.stringify(snap(configsOf(three), 'A', 4000, 40))").toString(), QString("{\"x\":4480,\"y\":0}"));
+        QCOMPARE(run("JSON.stringify(snap(configsOf(three), 'A', 2200, -700))").toString(), QString("{\"x\":2200,\"y\":-1080}"));
+        // Low on its left, A lines up with B's bottom edge.
+        QCOMPARE(run("JSON.stringify(snap(configsOf(three), 'A', -1500, 300))").toString(), QString("{\"x\":0,\"y\":360}"));
+        // Moved to the right of B, everything shifts so the left edge is 0 again.
+        QCOMPARE(run("JSON.stringify(move(three, 'A', 4000, 0).map(c => [c.name, c.x]))").toString(),
+                 QString("[[\"A\",2560],[\"B\",0]]"));
+        // Dropped where it already was, nothing changes.
+        QCOMPARE(run("move(three, 'A', -300, 0).length").toInt(), 0);
+        // Turning C on puts it to the right of the rest.
+        QCOMPARE(run("JSON.stringify(extend(three, 'C').map(c => [c.name, c.enabled, c.x]))").toString(),
+                 QString("[[\"C\",true,4480]]"));
+        // Duplicating: B shows A's picture; turning A off: B moves into its
+        // place. Either way no gap is left.
+        QCOMPARE(run("duplicate(three, 'B', 'A')[0].mirror").toString(), QString("A"));
+        run("var four = three.concat([mk('D', 4480, 1920, 1080)])");
+        QCOMPARE(run("JSON.stringify(duplicate(four, 'B', 'A').map(c => [c.name, c.x]))").toString(),
+                 QString("[[\"B\",1920],[\"D\",1920]]"));
+        QCOMPARE(run("JSON.stringify(disconnect(four, 'A').map(c => [c.name, c.enabled, c.x]))").toString(),
+                 QString("[[\"A\",false,0],[\"B\",true,0],[\"D\",true,2560]]"));
+        // Only one on.
+        QCOMPARE(run("JSON.stringify(showOnly(three, 'B').map(c => [c.name, c.enabled, c.x]))").toString(),
+                 QString("[[\"A\",false,0],[\"B\",true,0]]"));
+        // Never the last one off.
+        QCOMPARE(run("disconnect([three[0]], 'A').length").toInt(), 0);
+        QCOMPARE(run("disconnect(three, 'A')[0].enabled").toBool(), false);
+        // What it offers, and what Windows would suggest.
+        QCOMPARE(run("closestRate([{width: 2560, height: 1440, refresh: 165}, {width: 2560, height: 1440, refresh: 60}], 2560, 1440, 144)").toNumber(), 165.0);
+        QCOMPARE(run("recommendedScale({ physicalWidth: 600, width: 3840, transform: 0, modes: [{ width: 3840, height: 2160 }] })").toNumber(), 1.75);
+        QVERIFY(run("recommendedScale({ physicalWidth: 0, width: 1920 })").isNull());
     }
 
     // ---------- The window ----------
@@ -318,7 +522,7 @@ private slots:
         Theme theme(dir.path());
         Backend backend(dir.path() + "/settings.json", dir.path() + "/defaults.json", fakeApply(dir));
         Monitors monitors(script(dir, "hyprctl", "echo '[{\"name\": \"DP-1\", \"width\": 1920, \"height\": 1080}]'\n"),
-                          dir.filePath("nowhere"), dir.filePath("nowhere"));
+                          dir.filePath("monitors.lua"));
         QQmlApplicationEngine engine;
         engine.rootContext()->setContextProperty("translator", &translator);
         engine.rootContext()->setContextProperty("theme", &theme);
@@ -341,8 +545,7 @@ private slots:
         QCOMPARE(window->property("pageId").toString(), QString("package/windows"));
         QCOMPARE(window->property("categoryId").toString(), QString("package"));
 
-        // Search finds cards on pages that aren't showing, but not the hidden
-        // way into Displays when it isn't installed.
+        // Search finds cards on pages that aren't showing, display settings too.
         QCOMPARE(eval("search('corner').map(r => r.page.pageId).join()").toString(), QString("package/snapping"));
         QCOMPARE(eval("search('animation').map(r => r.item.path).join()").toString(), QString("animations.enabled"));
         QCOMPARE(eval("search('motion')[0].page.pageId").toString(), QString("package/windows"));
@@ -352,9 +555,11 @@ private slots:
         QCOMPARE(backend.value("animations.enabled"), QVariant(false));
         QCOMPARE(read(dir.path() + "/settings.json"), QJsonObject({{"animations", QJsonObject({{"enabled", false}})}}));
         QCOMPARE(eval("search('Snapping')[0].item === null").toBool(), true);
-        QCOMPARE(eval("search('open displays').length").toInt(), 0);
-        QVERIFY(eval("search('displays isn').length").toInt() == 1);
-        QTRY_COMPARE(eval("findPage('display').shown.length").toInt(), 1);
+        QTRY_COMPARE(eval("findPage('display').list.length").toInt(), 1);
+        QCOMPARE(eval("search('resolution')[0].page.pageId").toString(), QString("display"));
+        QCOMPARE(eval("search('refresh rate')[0].item.title").toString(), QString("Choose a refresh rate"));
+        // One display: nothing to duplicate or extend to.
+        QCOMPARE(eval("search('duplicate').length").toInt(), 0);
     }
 
     // ---------- This PC ----------
