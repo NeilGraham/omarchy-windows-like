@@ -182,9 +182,29 @@ Item {
         wh: ipc.size[1],
         // The most recently focused on top.
         stacking: ipc.focusHistoryID === undefined ? -1000 : -Number(ipc.focusHistoryID),
-        appId: String(w.appId || "")
+        appId: String(w.appId || ""),
+        // For finding the app of a window that doesn't name it.
+        pid: Number(ipc.pid) || 0,
+        title: String(ipc.title || ""),
+        group: ipc.grouped && ipc.grouped.length > 1 ? String(ipc.grouped[0]) : String(top.address)
       })
     }
+    // A tabbed window (a Hyprland group) is one window: keep the tab in front,
+    // the one focused last.
+    var front = {}
+    for (var g = 0; g < wanted.length; g++) {
+      var key = wanted[g].group
+      if (!front[key] || wanted[g].stacking > front[key].stacking)
+        front[key] = wanted[g]
+    }
+    wanted = wanted.filter(function(w) {
+      return front[w.group] === w
+    })
+    counts = {}
+    for (var c = 0; c < wanted.length; c++)
+      counts[wanted[c].wsId] = (counts[wanted[c].wsId] || 0) + 1
+    for (var s = 0; s < wanted.length; s++)
+      delete wanted[s].group
     var byAddress = {}
     for (var j = 0; j < wanted.length; j++)
       byAddress[wanted[j].address] = wanted[j]
@@ -480,6 +500,8 @@ Item {
             required property real wh
             required property int stacking
             required property string appId
+            required property int pid
+            required property string title
             readonly property Item layerItem: {
               root.cardsRevision
               var card = cardRepeater.itemAt(wsId - root.blockBase - 1)
@@ -523,7 +545,7 @@ Item {
               height: size
               sourceSize.width: Style.space(44)
               sourceSize.height: Style.space(44)
-              source: root.host ? root.host.iconFor(root.host.entryForAppId(mini.appId), mini.appId) : ""
+              source: root.host ? root.host.iconFor(root.host.entryForWindow(mini.appId, mini.pid, mini.title), mini.appId) : ""
               asynchronous: String(source).indexOf("file:") === 0
             }
 

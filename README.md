@@ -22,7 +22,10 @@ numbers can come back there with *Show Omarchy's workspace row* in Settings.
 - App buttons show pinned and running apps, with Windows 11's line under a
   running app and a longer accent line under the focused one. Click to open,
   bring forward, minimize, or step through an app's windows; right-click to
-  pin, open another window, or close.
+  pin, open another window, or close. Rest the pointer on a running app for
+  a preview of each of its windows, as on Windows 11: click one to bring it
+  forward, middle-click or × to close it. A window with tabs is one window,
+  on the taskbar, in its previews, in snap assist and on the workspaces.
 - **Workspaces**, right of the Omarchy mark: Omarchy's workspaces are what
   Windows calls virtual desktops, and this is its Task View. The button shows
   the number of the workspace you're on. Click it for your workspaces along

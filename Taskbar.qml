@@ -4,6 +4,7 @@ import QtQuick.Effects
 import Quickshell
 import Quickshell.Hyprland
 import Quickshell.Io
+import Quickshell.Wayland
 import qs.Commons
 import qs.Commons as Commons
 import qs.Ui
@@ -68,6 +69,79 @@ BarWidget {
     return id ? DesktopEntries.byId(id) : null
   }
 
+  // ---------- Apps for windows that don't name theirs ----------
+
+  // What each desktop entry runs, for matching processes to it.
+  readonly property var entryCommands: {
+    var values = DesktopEntries.applications.values
+    var out = []
+    for (var i = 0; i < values.length; i++)
+      out.push({ id: values[i].id, name: values[i].name, command: values[i].command || [], workingDirectory: values[i].workingDirectory || "" })
+    return out
+  }
+
+  // pid -> { exe, cwd, args }, read from /proc once per process.
+  property var processInfo: ({})
+  property var processWanted: []
+
+  function entryForWindow(appId, pid, title) {
+    var entry = appId ? root.entryForAppId(appId) : null
+    if (entry || !(pid > 0))
+      return entry
+    var info = root.processInfo[pid]
+    if (info === undefined) {
+      Qt.callLater(root.wantProcess, pid)
+      return null
+    }
+    var id = Model.entryForProcess(info, root.entryCommands, title, Quickshell.env("HOME"))
+    return id ? DesktopEntries.byId(id) : null
+  }
+
+  function wantProcess(pid) {
+    if (root.processInfo[pid] !== undefined || root.processWanted.indexOf(pid) >= 0)
+      return
+    root.processWanted = root.processWanted.concat([pid])
+    processTimer.restart()
+  }
+
+  Timer {
+    id: processTimer
+    interval: 50
+    onTriggered: {
+      if (processReader.running || root.processWanted.length === 0)
+        return
+      processReader.pids = root.processWanted.map(String)
+      root.processWanted = []
+      processReader.running = true
+    }
+  }
+
+  Process {
+    id: processReader
+    property var pids: []
+    // pid, executable and working folder, then the arguments split by \x1f.
+    command: ["sh", "-c", "for p in \"$@\"; do printf '%s\\t%s\\t%s\\t' \"$p\" \"$(readlink /proc/$p/exe 2>/dev/null)\" \"$(readlink /proc/$p/cwd 2>/dev/null)\"; tr '\\0' '\\037' < /proc/$p/cmdline 2>/dev/null; echo; done", "sh"].concat(pids)
+    stdout: StdioCollector {
+      onStreamFinished: {
+        var next = Object.assign({}, root.processInfo)
+        var lines = String(text).split("\n")
+        for (var i = 0; i < lines.length; i++) {
+          var f = lines[i].split("\t")
+          if (f.length < 4 || !(Number(f[0]) > 0))
+            continue
+          next[Number(f[0])] = { exe: f[1], cwd: f[2], args: f.slice(3).join("\t").split("\x1f").filter(function(a) { return a !== "" }) }
+        }
+        // A process that has gone, or can't be read, is not asked about again.
+        for (var j = 0; j < processReader.pids.length; j++)
+          if (next[Number(processReader.pids[j])] === undefined)
+            next[Number(processReader.pids[j])] = {}
+        root.processInfo = next
+        if (root.processWanted.length > 0)
+          processTimer.restart()
+      }
+    }
+  }
+
   function iconFor(entry, appId) {
     var name = entry && entry.icon ? entry.icon : String(appId || "") || "application-x-executable"
     if (root.appLibrary)
@@ -94,12 +168,20 @@ BarWidget {
       var t = toplevels[i].wayland
       if (!t || t.parent)
         continue
-      // A window that doesn't name its app (some X11 apps set no class) still
+      // A window whose app id names no app (some X11 apps set no class) is
+      // matched to its app by the process behind it; failing that it still
       // gets a button, as every window does on Windows: its own, with its
       // title and a generic icon.
-      var entry = t.appId ? root.entryForAppId(t.appId) : null
       var ws = toplevels[i].workspace
+      var ipc = toplevels[i].lastIpcObject || {}
+      var entry = root.entryForWindow(t.appId, ipc.pid, t.title)
       windows.push({
+        // Its tabs (a Hyprland group), and which was focused last, for
+        // showing a tabbed window once.
+        group: ipc.grouped || [],
+        focusHistoryID: ipc.focusHistoryID,
+        pid: Number(ipc.pid) || 0,
+        size: ipc.size || null,
         key: entry ? entry.id : (t.appId || "window:" + toplevels[i].address),
         appId: t.appId,
         address: toplevels[i].address,
@@ -110,7 +192,24 @@ BarWidget {
         toplevel: t
       })
     }
-    return Model.buildItems(root.pinned, windows, root.workspaceId)
+    return Model.buildItems(root.pinned, Model.collapseTabs(windows), root.workspaceId)
+  }
+
+  // Hyprland reports a window's tabs and focus order only when asked, so ask
+  // again when they change: a tab opened, moved in or out, or picked.
+  Connections {
+    target: root.part === "apps" ? Hyprland : null
+    function onRawEvent(event) {
+      var name = event ? event.name : ""
+      if (name === "openwindow" || name === "closewindow" || name === "activewindowv2" || name === "moveintogroup"
+          || name === "moveoutofgroup" || name === "togglegroup" || name === "movewindowv2")
+        toplevelRefresh.restart()
+    }
+  }
+  Timer {
+    id: toplevelRefresh
+    interval: 60
+    onTriggered: Hyprland.refreshToplevels()
   }
 
   // ---------- Order (drag a button to move it) ----------
@@ -285,14 +384,25 @@ BarWidget {
 
   // Like Omarchy's dock: a minimized window comes back to this workspace
   // without animating in, then is focused and raised.
+  // A tabbed window comes forward on the tab in front, whichever tab the
+  // taskbar knew of: focusing another tab would switch to it.
   function bringForward(window) {
-    var target = "window = 'address:" + root.addressOf(window) + "'"
-    var steps = []
+    var steps = ["local w = hl.get_window('address:" + root.addressOf(window) + "')",
+                 "if not w then return end",
+                 "if w.group and w.group.current then w = w.group.current end"]
     if (window.minimized && root.workspaceId >= 1)
-      steps.push("hl.dispatch(hl.dsp.window.move({ workspace = '" + root.workspaceId + "', " + target + " }))")
-    steps.push("hl.dispatch(hl.dsp.focus({ " + target + " }))")
-    steps.push("hl.dispatch(hl.dsp.window.alter_zorder({ mode = 'top', " + target + " }))")
+      steps.push("hl.dispatch(hl.dsp.window.move({ workspace = '" + root.workspaceId + "', window = w }))")
+    steps.push("hl.dispatch(hl.dsp.focus({ window = w }))")
+    steps.push("hl.dispatch(hl.dsp.window.alter_zorder({ mode = 'top', window = w }))")
     root.run(steps.join("; "))
+  }
+
+  // Closing a window closes all its tabs, as closing a window does on Windows.
+  function closeWindow(window) {
+    var members = window.members && window.members.length ? window.members : [window]
+    for (var i = 0; i < members.length; i++)
+      if (members[i].toplevel)
+        members[i].toplevel.close()
   }
 
   function launch(id) {
@@ -315,7 +425,7 @@ BarWidget {
 
   function closeAll(item) {
     for (var i = 0; i < item.windows.length; i++)
-      item.windows[i].toplevel.close()
+      root.closeWindow(item.windows[i])
   }
 
   function togglePin(listName, id) {
@@ -465,6 +575,7 @@ BarWidget {
     Repeater {
       id: appsRepeater
       model: root.rowItems
+      onItemAdded: root.rowRevision++
 
       Rectangle {
         id: button
@@ -568,6 +679,7 @@ BarWidget {
             if (!button.held) {
               if (root.dragFrom >= 0 || Math.abs(dx) < Style.space(8))
                 return
+              root.closePreview()
               root.beginDrag(button.index)
               if (root.bar)
                 root.bar.hideTooltip(button)
@@ -585,6 +697,7 @@ BarWidget {
               suppressClick = false
               return
             }
+            root.closePreview()
             if (mouse.button === Qt.RightButton)
               root.openContext(button, button.modelData)
             else if (mouse.button === Qt.MiddleButton)
@@ -593,12 +706,14 @@ BarWidget {
               root.activate(button.modelData)
           }
           onContainsMouseChanged: {
-            if (!root.bar || root.dragFrom >= 0)
+            if (root.dragFrom >= 0)
               return
-            if (containsMouse)
-              root.bar.showTooltip(button, button.modelData.windows.length > 1
-                  ? (button.entry ? button.entry.name : button.label) + " · " + button.modelData.windows.length + " windows"
-                  : button.label)
+            // A running app shows its windows; a pinned one its name.
+            var previewed = root.hoverButton(button.modelData, containsMouse)
+            if (!root.bar)
+              return
+            if (containsMouse && !previewed)
+              root.bar.showTooltip(button, button.label)
             else
               root.bar.hideTooltip(button)
           }
@@ -634,6 +749,280 @@ BarWidget {
         anchors.fill: parent
         hoverEnabled: true
         onClicked: root.overflowOpen = !root.overflowOpen
+      }
+    }
+  }
+
+  // ---------- Window previews (Windows 11's thumbnails) ----------
+  //
+  // Resting on a running app's button shows its windows, each as it looks with
+  // its title, even when there is just one: click one to bring it forward,
+  // middle-click or × to close it. A tabbed window is one window here. The
+  // previews follow the app's key, not a button, since the row is rebuilt as
+  // windows change; moving along the bar switches app at once, as on Windows.
+
+  property string previewKey: ""
+  property string pendingKey: ""
+  property string hoveredKey: ""
+  property bool previewOpen: false
+  property int rowRevision: 0
+
+  function itemByKey(key) {
+    for (var i = 0; i < root.rowItems.length; i++)
+      if (root.rowItems[i].key === key)
+        return root.rowItems[i]
+    return null
+  }
+
+  readonly property var previewData: {
+    var item = root.previewKey ? root.itemByKey(root.previewKey) : null
+    return item && item.windows.length > 0 ? item : null
+  }
+  readonly property Item previewAnchor: {
+    root.rowRevision
+    for (var i = 0; i < root.rowItems.length; i++)
+      if (root.rowItems[i].key === root.previewKey)
+        return appsRepeater.itemAt(i)
+    return null
+  }
+  onPreviewDataChanged: if (root.previewOpen && !root.previewData) root.closePreview()
+  // The button the previews hang from, kept while the row is rebuilt.
+  property Item shownAnchor: null
+  onPreviewAnchorChanged: if (root.previewAnchor) root.shownAnchor = root.previewAnchor
+  property bool previewUsed: false
+
+  // Another popup of the bar's (Start, a menu) is open: leave it be.
+  readonly property bool otherPopout: !!root.bar && !!root.bar.activePopout && root.bar.activePopout !== previewOwner
+
+  // True when the button's windows show (so it needs no tooltip).
+  function hoverButton(item, inside) {
+    if (!inside) {
+      if (root.hoveredKey === item.key)
+        root.hoveredKey = ""
+      previewOpenTimer.stop()
+      previewCloseTimer.restart()
+      return false
+    }
+    root.hoveredKey = item.key
+    previewCloseTimer.stop()
+    if (item.windows.length === 0 || root.contextOpen || root.otherPopout) {
+      root.closePreview()
+      return false
+    }
+    if (root.previewOpen) {
+      root.previewKey = item.key
+    } else {
+      root.pendingKey = item.key
+      previewOpenTimer.restart()
+    }
+    return true
+  }
+
+  function closePreview() {
+    previewOpenTimer.stop()
+    root.previewOpen = false
+  }
+
+  Timer {
+    id: previewOpenTimer
+    interval: 400
+    onTriggered: {
+      if (root.hoveredKey !== root.pendingKey || root.otherPopout)
+        return
+      root.previewKey = root.pendingKey
+      if (root.previewData && root.previewAnchor) {
+        // Fresh tabs and sizes for the cards.
+        Hyprland.refreshToplevels()
+        root.shownAnchor = root.previewAnchor
+        root.previewUsed = true
+        root.previewOpen = true
+      }
+    }
+  }
+  Timer {
+    id: previewCloseTimer
+    interval: 300
+    onTriggered: if (root.hoveredKey === "" && !root.previewHovered) root.closePreview()
+  }
+
+  QtObject {
+    id: previewOwner
+    function close() {
+      root.closePreview()
+    }
+  }
+
+  readonly property bool previewHovered: previewLoader.item ? previewLoader.item.containsMouse : false
+  onPreviewHoveredChanged: {
+    if (root.previewHovered)
+      previewCloseTimer.stop()
+    else
+      previewCloseTimer.restart()
+  }
+
+  readonly property int previewThumbHeight: Style.space(120)
+  readonly property int previewThumbMaxWidth: Style.space(220)
+  readonly property int previewTitleHeight: Style.space(26)
+  readonly property int previewSpacing: Style.space(8)
+
+  function previewThumbWidth(window) {
+    var size = window && window.size
+    var aspect = size && size[0] > 0 && size[1] > 0 ? size[0] / size[1] : 16 / 10
+    return Math.round(Math.max(root.previewThumbHeight * 0.6, Math.min(root.previewThumbMaxWidth, root.previewThumbHeight * aspect)))
+  }
+
+  Loader {
+    id: previewLoader
+    // Built the first time it opens, then kept.
+    active: root.part === "apps" && root.previewUsed
+    sourceComponent: PopupCard {
+      id: previewCard
+      anchorItem: root.shownAnchor
+      bar: root.bar
+      owner: previewOwner
+      triggerMode: "hover"
+      open: root.previewOpen
+      padding: Style.space(6)
+      contentWidth: previewCard.fittedContentWidth(previewRow.implicitWidth + previewCard.padding * 2 + 2)
+      contentHeight: previewCard.fittedContentHeight(previewRow.implicitHeight)
+      onAnchorItemChanged: if (anchorItem) Qt.callLater(function() { if (previewCard.anchor) previewCard.anchor.updateAnchor() })
+      onContentWidthChanged: Qt.callLater(function() { if (previewCard.anchor) previewCard.anchor.updateAnchor() })
+
+      Row {
+        id: previewRow
+        spacing: root.previewSpacing
+
+        Repeater {
+          model: root.previewData ? root.previewData.windows : []
+
+          Rectangle {
+            id: thumb
+            required property var modelData
+            readonly property bool hovered: thumbMouse.containsMouse || closeMouse.containsMouse
+            width: root.previewThumbWidth(modelData) + Style.space(12)
+            height: root.previewTitleHeight + root.previewThumbHeight + Style.space(12)
+            radius: Math.max(Style.cornerRadius, 4)
+            color: thumbMouse.pressed ? Style.pressedFill : (thumb.hovered || thumb.modelData.activated ? Style.hoverFill : "transparent")
+
+            MouseArea {
+              id: thumbMouse
+              anchors.fill: parent
+              hoverEnabled: true
+              acceptedButtons: Qt.LeftButton | Qt.MiddleButton
+              cursorShape: Qt.PointingHandCursor
+              onClicked: function(mouse) {
+                var window = thumb.modelData
+                root.closePreview()
+                if (mouse.button === Qt.MiddleButton)
+                  root.closeWindow(window)
+                else
+                  root.bringForward(window)
+              }
+            }
+
+            Image {
+              id: thumbIcon
+              x: Style.space(6)
+              y: Style.space(6) + Math.round((root.previewTitleHeight - height) / 2)
+              width: Style.space(16)
+              height: Style.space(16)
+              sourceSize.width: width * 2
+              sourceSize.height: height * 2
+              source: root.iconFor(root.entryForWindow(thumb.modelData.appId, thumb.modelData.pid, thumb.modelData.title), thumb.modelData.appId)
+              asynchronous: String(source).indexOf("file:") === 0
+            }
+
+            Text {
+              anchors.left: thumbIcon.right
+              anchors.leftMargin: Style.space(6)
+              anchors.right: closeButton.left
+              anchors.rightMargin: Style.space(4)
+              anchors.verticalCenter: thumbIcon.verticalCenter
+              textFormat: Text.PlainText
+              elide: Text.ElideRight
+              text: String(thumb.modelData.title || "")
+              color: Commons.Color.popups.text
+              font.family: Style.font.family
+              font.pixelSize: Style.font.body
+            }
+
+            Rectangle {
+              id: closeButton
+              anchors.right: parent.right
+              anchors.rightMargin: Style.space(4)
+              anchors.verticalCenter: thumbIcon.verticalCenter
+              width: Style.space(22)
+              height: Style.space(22)
+              radius: Math.max(Style.cornerRadius, 4)
+              visible: thumb.hovered
+              color: closeMouse.containsMouse ? "#c42b1c" : "transparent"
+
+              Text {
+                anchors.centerIn: parent
+                textFormat: Text.PlainText
+                text: "\u2715"
+                color: closeMouse.containsMouse ? "white" : Commons.Color.popups.text
+                font.family: Style.font.family
+                font.pixelSize: Math.round(Style.font.body * 0.9)
+              }
+
+              MouseArea {
+                id: closeMouse
+                anchors.fill: parent
+                hoverEnabled: true
+                onClicked: root.closeWindow(thumb.modelData)
+              }
+            }
+
+            ScreencopyView {
+              id: capture
+              x: Style.space(6)
+              y: Style.space(6) + root.previewTitleHeight
+              width: root.previewThumbWidth(thumb.modelData)
+              height: root.previewThumbHeight
+              captureSource: root.previewOpen && thumb.modelData.toplevel ? thumb.modelData.toplevel : null
+              live: root.previewOpen
+              paintCursor: false
+            }
+
+            // A tabbed window says how many tabs it has.
+            Rectangle {
+              visible: thumb.modelData.tabs > 1
+              anchors.right: capture.right
+              anchors.bottom: capture.bottom
+              anchors.margins: Style.space(4)
+              width: tabsText.implicitWidth + Style.space(12)
+              height: tabsText.implicitHeight + Style.space(4)
+              radius: height / 2
+              color: Commons.Util.alpha(Commons.Color.popups.background, 0.85)
+              border.width: 1
+              border.color: Commons.Util.alpha(Commons.Color.popups.text, 0.25)
+
+              Text {
+                id: tabsText
+                anchors.centerIn: parent
+                textFormat: Text.PlainText
+                text: thumb.modelData.tabs + " tabs"
+                color: Commons.Color.popups.text
+                font.family: Style.font.family
+                font.pixelSize: Math.round(Style.font.body * 0.85)
+              }
+            }
+
+            // Until the capture arrives (or for a window that can't be
+            // captured), the app's icon.
+            Image {
+              anchors.centerIn: capture
+              visible: !capture.hasContent
+              width: Style.space(40)
+              height: Style.space(40)
+              sourceSize.width: width * 2
+              sourceSize.height: height * 2
+              source: thumbIcon.source
+              asynchronous: thumbIcon.asynchronous
+            }
+          }
+        }
       }
     }
   }
@@ -726,6 +1115,7 @@ BarWidget {
   property bool contextOpen: false
 
   function openContext(anchor, item) {
+    root.closePreview()
     root.contextAnchor = anchor
     root.contextItem = item
     root.contextOpen = true

@@ -6,6 +6,7 @@ import Quickshell.Io
 import Quickshell.Wayland
 import qs.Commons // qmllint disable import
 import qs.Commons as Commons // qmllint disable import
+import "TaskbarModel.js" as Model
 
 // Windows-style window snapping for Omarchy's floating workspaces.
 //
@@ -707,22 +708,95 @@ Item {
     }
 
     property var iconCache: ({})
+    function iconPathOf(icon) {
+        icon = String(icon || "");
+        if (icon.charAt(0) === "/")
+            return "file://" + icon;
+        return (icon && Quickshell.iconPath(icon, true)) || Quickshell.iconPath("application-x-executable", true);
+    }
+
     function iconFor(client) {
         var cls = String(client.class || client.initialClass || "").toLowerCase();
         if (Object.prototype.hasOwnProperty.call(root.iconCache, cls))
             return root.iconCache[cls];
         var entries = DesktopEntries.applications ? DesktopEntries.applications.values : [];
-        var icon = cls;
-        for (var i = 0; i < entries.length; i++) {
+        var found = null;
+        for (var i = 0; cls && i < entries.length; i++) {
             var e = entries[i];
             if (String(e.id || "").toLowerCase().replace(/\.desktop$/, "") === cls || String(e.startupClass || "").toLowerCase() === cls) {
-                icon = String(e.icon || cls);
+                found = e;
                 break;
             }
         }
-        var path = Quickshell.iconPath(icon, true) || Quickshell.iconPath("application-x-executable", true);
-        root.iconCache[cls] = path;
-        return path;
+        if (found || (cls && Quickshell.iconPath(cls, true))) {
+            var path = root.iconPathOf(found ? (found.icon || cls) : cls);
+            root.iconCache[cls] = path;
+            return path;
+        }
+        // A window whose class names no app (or that has none, as some X11
+        // apps don't) is matched to its app by the process behind it, as the
+        // taskbar does (TaskbarModel.entryForProcess).
+        var pid = Number(client.pid) || 0;
+        var info = pid > 0 ? root.processInfo[pid] : undefined;
+        if (pid > 0 && info === undefined) {
+            Qt.callLater(root.wantProcess, pid);
+            return root.iconPathOf("");
+        }
+        var commands = [];
+        for (var j = 0; j < entries.length; j++)
+            commands.push({ id: entries[j].id, name: entries[j].name, command: entries[j].command || [], workingDirectory: entries[j].workingDirectory || "" });
+        var id = info ? Model.entryForProcess(info, commands, client.title, Quickshell.env("HOME")) : "";
+        var entry = id ? DesktopEntries.byId(id) : null;
+        return root.iconPathOf(entry ? entry.icon : "");
+    }
+
+    // pid -> { exe, cwd, args }, read from /proc once per process.
+    property var processInfo: ({})
+    property var processWanted: []
+
+    function wantProcess(pid) {
+        if (root.processInfo[pid] !== undefined || root.processWanted.indexOf(pid) >= 0)
+            return;
+        root.processWanted = root.processWanted.concat([pid]);
+        processTimer.restart();
+    }
+
+    Timer {
+        id: processTimer
+        interval: 30
+        onTriggered: {
+            if (processReader.running || root.processWanted.length === 0)
+                return;
+            processReader.pids = root.processWanted.map(String);
+            root.processWanted = [];
+            processReader.running = true;
+        }
+    }
+
+    Process {
+        id: processReader
+        property var pids: []
+        // pid, executable and working folder, then the arguments split by \x1f.
+        command: ["sh", "-c", "for p in \"$@\"; do printf '%s\\t%s\\t%s\\t' \"$p\" \"$(readlink /proc/$p/exe 2>/dev/null)\" \"$(readlink /proc/$p/cwd 2>/dev/null)\"; tr '\\0' '\\037' < /proc/$p/cmdline 2>/dev/null; echo; done", "sh"].concat(pids)
+        stdout: StdioCollector {
+            onStreamFinished: {
+                var next = Object.assign({}, root.processInfo);
+                var lines = String(text).split("\n");
+                for (var i = 0; i < lines.length; i++) {
+                    var f = lines[i].split("\t");
+                    if (f.length < 4 || !(Number(f[0]) > 0))
+                        continue;
+                    next[Number(f[0])] = { exe: f[1], cwd: f[2], args: f.slice(3).join("\t").split("\x1f").filter(function(a) { return a !== ""; }) };
+                }
+                // A process that has gone, or can't be read, is not asked about again.
+                for (var j = 0; j < processReader.pids.length; j++)
+                    if (next[Number(processReader.pids[j])] === undefined)
+                        next[Number(processReader.pids[j])] = {};
+                root.processInfo = next;
+                if (root.processWanted.length > 0)
+                    processTimer.restart();
+            }
+        }
     }
 
     function isSnappable(c) {
@@ -744,14 +818,32 @@ Item {
 
     // Snap assist offers the windows of the workspace being snapped on, as
     // Windows offers those of the virtual desktop you are on.
+    // A tabbed window (a Hyprland group) is offered once, as the tab in front:
+    // the one focused last, since picking a tab focuses it. A group with a
+    // placed tab is placed.
+    function tabsOf(c) {
+        var g = c.grouped || [];
+        return g.length > 1 ? g : [c.address];
+    }
+
     function refreshCandidates() {
         var list = [];
         var wsId = root.monitor ? root.monitor.workspaceId : -1;
+        var front = {};  // first tab's address -> the tab in front so far
         for (var i = 0; i < root.clients.length; i++) {
             var c = root.clients[i];
-            if (root.isSnappable(c) && root.placedAddresses.indexOf(c.address) === -1 && root.onWorkspace(c, wsId))
-                list.push(c);
+            var tabs = root.tabsOf(c);
+            var placed = tabs.some(function(a) {
+                return root.placedAddresses.indexOf(a) !== -1;
+            });
+            if (!root.isSnappable(c) || placed || !root.onWorkspace(c, wsId))
+                continue;
+            var key = tabs[0];
+            if (!front[key] || Number(c.focusHistoryID) < Number(front[key].focusHistoryID))
+                front[key] = c;
         }
+        for (var k in front)
+            list.push(front[k]);
         list.sort(function(a, b) {
             return Number(a.focusHistoryID) - Number(b.focusHistoryID);
         });

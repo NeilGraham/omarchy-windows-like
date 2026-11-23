@@ -39,6 +39,184 @@ function visibleWindow(window, workspaceId) {
   return !!window && (window.minimized || window.workspaceId === workspaceId)
 }
 
+// Tabs are Hyprland groups: each tab is a window of its own to Hyprland, but
+// one window to whoever uses it. Keeps one entry per group, the tab in front
+// (the one focused last: picking a tab focuses it), which carries
+//   tabs:    how many tabs the window has
+//   members: every tab, in group order
+// and is activated when any tab is. Hyprland's focusHistoryID counts up from
+// the focused window (0); a window without one counts as never focused.
+//   windows: [{ address, group: [addresses], focusHistoryID, activated }]
+function collapseTabs(windows) {
+  var list = windows || []
+  var norm = function(a) {
+    a = String(a || "")
+    return a.indexOf("0x") === 0 ? a : "0x" + a
+  }
+  var byAddress = {}
+  for (var i = 0; i < list.length; i++)
+    byAddress[norm(list[i].address)] = list[i]
+  var rank = function(w) {
+    var id = Number(w.focusHistoryID)
+    return isNaN(id) || id < 0 ? Infinity : id
+  }
+  var done = {}
+  var out = []
+  for (var j = 0; j < list.length; j++) {
+    var w = list[j]
+    var address = norm(w.address)
+    if (done[address])
+      continue
+    var group = (w.group || []).map(norm).filter(function(a) { return !!byAddress[a] })
+    if (group.indexOf(address) < 0)
+      group = [address]
+    var members = group.map(function(a) { return byAddress[a] })
+    var front = members[0]
+    var activated = false
+    for (var k = 0; k < members.length; k++) {
+      done[norm(members[k].address)] = true
+      if (rank(members[k]) < rank(front))
+        front = members[k]
+      activated = activated || !!members[k].activated
+    }
+    out.push(Object.assign({}, front, { tabs: members.length, members: members, activated: activated }))
+  }
+  return out
+}
+
+// The desktop entry a window belongs to when its app id names none (some
+// apps set none at all, as an X11 app with no class does), from the process
+// behind it. In order:
+//   1. it runs the entry's program;
+//   2. it runs out of the folder the entry's program is in (its executable,
+//      working folder, or a file it was started with) - a launcher script
+//      that changes into its folder and starts the real program, as
+//      Skraper's run.sh starts mono ./SkraperUI.exe;
+//   3. its working folder is the entry's Path=;
+//   4. its title starts with the entry's name, when only one entry's does.
+// A folder of system programs (/usr/bin…) says nothing about which app, nor
+// does home or /. Paths are compared as given (no symlinks resolved).
+//   proc:    { exe, cwd, args: [argv0, ...] }
+//   entries: [{ id, name, command: [program, args...], workingDirectory }]
+// Returns the entry's id, or "".
+var GENERIC_DIRS = ["/", "/bin", "/sbin", "/usr/bin", "/usr/sbin", "/usr/local/bin", "/usr/lib", "/usr/libexec", "/usr/share"]
+
+function dirName(path) {
+  var p = String(path || "")
+  var at = p.lastIndexOf("/")
+  return at > 0 ? p.slice(0, at) : (at === 0 ? "/" : "")
+}
+
+function baseName(path) {
+  var p = String(path || "")
+  return p.slice(p.lastIndexOf("/") + 1)
+}
+
+function within(path, dir) {
+  return !!path && !!dir && (path === dir || path.indexOf(dir === "/" ? "/" : dir + "/") === 0)
+}
+
+function resolvePath(arg, cwd) {
+  var a = String(arg || "")
+  if (a === "" || a.charAt(0) === "-")
+    return ""
+  if (a.charAt(0) === "/")
+    return a
+  if (!cwd || a.indexOf("/") < 0)
+    return ""
+  var parts = (cwd + "/" + a).split("/")
+  var out = []
+  for (var i = 0; i < parts.length; i++) {
+    if (parts[i] === "" || parts[i] === ".")
+      continue
+    if (parts[i] === "..")
+      out.pop()
+    else
+      out.push(parts[i])
+  }
+  return "/" + out.join("/")
+}
+
+// What an entry's command runs: past env and its VAR=value settings, and
+// past an interpreter to the script or program it is given. "" for a shell
+// running a command line, which names no one program.
+var RUNNERS = ["sh", "bash", "zsh", "dash", "python", "python3", "perl", "ruby", "node", "mono", "java", "wine", "wine64", "uwsm-app", "gtk-launch", "setsid", "nohup"]
+
+function programOf(command) {
+  var c = (command || []).map(String)
+  var i = 0
+  while (i < c.length && (baseName(c[i]) === "env" || /^[A-Za-z_][A-Za-z0-9_]*=/.test(c[i]) || (i > 0 && c[i].charAt(0) === "-" && baseName(c[i - 1]) === "env")))
+    i++
+  while (i < c.length && RUNNERS.indexOf(baseName(c[i])) >= 0) {
+    i++
+    while (i < c.length && c[i].charAt(0) === "-") {
+      if (c[i] === "-c")
+        return ""
+      if (c[i] === "--")
+        { i++; break }
+      i++
+    }
+  }
+  return i < c.length ? c[i] : ""
+}
+
+function entryForProcess(proc, entries, title, home) {
+  var list = (entries || []).map(function(e) {
+    return { id: e.id, name: e.name, program: programOf(e.command), workingDirectory: e.workingDirectory }
+  })
+  if (!proc)
+    proc = {}
+  var exe = String(proc.exe || "").replace(/ \(deleted\)$/, "")
+  var cwd = String(proc.cwd || "")
+  var args = proc.args || []
+  var homeDir = String(home || "")
+  var specific = function(dir) {
+    return !!dir && dir !== homeDir && GENERIC_DIRS.indexOf(dir) < 0
+  }
+  var paths = [exe, cwd]
+  for (var a = 0; a < args.length; a++) {
+    var p = resolvePath(args[a], cwd)
+    if (p)
+      paths.push(p)
+  }
+  var names = [baseName(exe), baseName(args[0])].filter(function(n) { return !!n })
+
+  // 1. Its program, by path or (for one on the PATH) by name.
+  for (var i = 0; i < list.length; i++) {
+    var program = String(list[i].program || "")
+    if (!program)
+      continue
+    if (program.charAt(0) === "/" ? paths.indexOf(program) >= 0 : names.indexOf(program) >= 0)
+      return list[i].id
+  }
+  // 2. Out of its program's folder.
+  for (var j = 0; j < list.length; j++) {
+    var dir = dirName(list[j].program)
+    if (String(list[j].program || "").charAt(0) === "/" && specific(dir))
+      for (var k = 0; k < paths.length; k++)
+        if (within(paths[k], dir))
+          return list[j].id
+  }
+  // 3. In its Path=.
+  for (var m = 0; m < list.length; m++) {
+    var wd = String(list[m].workingDirectory || "").replace(/\/+$/, "")
+    if (specific(wd) && within(cwd, wd))
+      return list[m].id
+  }
+  // 4. Named in the title.
+  var t = String(title || "").trim().toLowerCase()
+  var found = ""
+  for (var n = 0; n < list.length; n++) {
+    var name = String(list[n].name || "").trim().toLowerCase()
+    if (name.length < 3 || t.indexOf(name) !== 0 || /[a-z0-9]/.test(t.charAt(name.length)))
+      continue
+    if (found)
+      return ""
+    found = list[n].id
+  }
+  return found
+}
+
 // Taskbar buttons: pinned apps first, in pin order, then other running apps
 // in the order their first window appears. Windows of one app share a button.
 //   pinned:  ["firefox.desktop", ...]  (desktop ids)
@@ -301,6 +479,9 @@ function withLetterHeaders(apps, nameOf) {
 if (typeof module !== "undefined")
   module.exports = {
     isMinimizedWorkspace: isMinimizedWorkspace,
+    collapseTabs: collapseTabs,
+    entryForProcess: entryForProcess,
+    programOf: programOf,
     claimingEntryId: claimingEntryId,
     visibleWindow: visibleWindow,
     buildItems: buildItems,

@@ -115,3 +115,60 @@ test("all apps get a letter header per letter", () => {
   const rows = M.withLetterHeaders([{ n: "beta" }, { n: "Alpha" }, { n: "1Password" }, { n: "apple" }], a => a.n)
   assert.deepEqual(rows.map(r => r.header || r.app.n), ["#", "1Password", "A", "Alpha", "apple", "B", "beta"])
 })
+
+test("a tab group is one window: the tab focused last, carrying all its tabs", () => {
+  const ws = [
+    { address: "0xa", group: ["0xa", "0xb", "0xc"], focusHistoryID: 4, activated: false },
+    { address: "0xd", group: [], focusHistoryID: 1, activated: false },
+    { address: "b", group: ["0xa", "0xb", "0xc"], focusHistoryID: 0, activated: true },
+    { address: "0xc", group: ["0xa", "0xb", "0xc"], focusHistoryID: 2, activated: false },
+  ]
+  const out = M.collapseTabs(ws)
+  assert.deepEqual(out.map(w => [w.address, w.tabs, w.activated]), [["b", 3, true], ["0xd", 1, false]])
+  assert.deepEqual(out[0].members.map(w => w.address), ["0xa", "b", "0xc"])
+})
+
+test("a group member that is gone, or no focus history, leaves the rest in order", () => {
+  const out = M.collapseTabs([
+    { address: "0xa", group: ["0xa", "0xgone"] },
+    { address: "0xe" },
+  ])
+  assert.deepEqual(out.map(w => [w.address, w.tabs]), [["0xa", 1], ["0xe", 1]])
+})
+
+const entries = [
+  { id: "skraper", name: "Skraper", command: ["/home/u/tools/Skraper-1.4.2/run.sh"], workingDirectory: "/home/u/tools/Skraper-1.4.2" },
+  { id: "gimp", name: "GNU Image Manipulation Program", command: ["gimp", "%U"], workingDirectory: "" },
+  { id: "notes", name: "Notes", command: ["/usr/bin/notes"], workingDirectory: "/home/u" },
+  { id: "game", name: "Game", command: ["env", "SDL_VIDEODRIVER=x11", "/opt/game/start"], workingDirectory: "" },
+  { id: "pyapp", name: "Py App", command: ["python3", "-u", "/opt/pyapp/main.py"], workingDirectory: "" },
+  { id: "shell", name: "Shell thing", command: ["bash", "-c", "cd /tmp && foo"], workingDirectory: "" },
+]
+
+test("a window naming no app finds its entry from the folder its launcher script starts it in", () => {
+  // Skraper's run.sh: cd to its folder, exec mono ./SkraperUI.exe
+  const proc = { exe: "/usr/bin/mono-sgen", cwd: "/home/u/tools/Skraper-1.4.2", args: ["mono", "./SkraperUI.exe"] }
+  assert.equal(M.entryForProcess(proc, entries, " Skraper 1.4.9726", "/home/u"), "skraper")
+})
+
+test("by its program, by path or by name", () => {
+  assert.equal(M.entryForProcess({ exe: "/usr/bin/gimp-3.0", cwd: "/home/u", args: ["gimp"] }, entries, "", "/home/u"), "gimp")
+  assert.equal(M.entryForProcess({ exe: "/opt/game/bin/game.x86_64", cwd: "/home/u", args: ["/opt/game/bin/game.x86_64"] }, entries, "", "/home/u"), "game")
+})
+
+test("home, / and system folders match nothing; the title only when one name fits", () => {
+  const anyApp = { exe: "/usr/bin/python3", cwd: "/home/u", args: ["python3", "x.py"] }
+  assert.equal(M.entryForProcess(anyApp, entries, "Something else", "/home/u"), "")
+  assert.equal(M.entryForProcess(anyApp, entries, "Notes - today", "/home/u"), "notes")
+  assert.equal(M.entryForProcess(anyApp, entries, "Notebook", "/home/u"), "")
+  assert.equal(M.entryForProcess(anyApp, entries.concat([{ id: "notes2", name: "Notes", program: "x" }]), "Notes", "/home/u"), "")
+})
+
+test("an entry's program: past env and interpreters; a shell command line names none", () => {
+  assert.equal(M.programOf(["env", "A=1", "/opt/x/run"]), "/opt/x/run")
+  assert.equal(M.programOf(["python3", "-u", "/opt/pyapp/main.py"]), "/opt/pyapp/main.py")
+  assert.equal(M.programOf(["bash", "-c", "foo"]), "")
+  // Any python window isn't Py App, but one running its script is.
+  assert.equal(M.entryForProcess({ exe: "/usr/bin/python3.14", cwd: "/home/u", args: ["python3", "other.py"] }, entries, "", "/home/u"), "")
+  assert.equal(M.entryForProcess({ exe: "/usr/bin/python3.14", cwd: "/home/u", args: ["python3", "-u", "/opt/pyapp/main.py"] }, entries, "", "/home/u"), "pyapp")
+})

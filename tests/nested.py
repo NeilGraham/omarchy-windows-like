@@ -160,7 +160,7 @@ class Nested:
     self.shell_dir = self.scratch / 'qs'
     shutil.copytree(HERE / 'qs-stub', self.shell_dir)
     shutil.copy(qml, self.shell_dir / qml.name)
-    for helper in ('Settings.qml',):
+    for helper in ('Settings.qml', 'TaskbarModel.js'):
       shutil.copy(qml.parent / helper, self.shell_dir / helper)
     # The repo's defaults, and settings of the test's own (none unless it writes some).
     self.settings_json = self.scratch / 'windows-like-settings.json'
