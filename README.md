@@ -13,24 +13,27 @@ without thinking.
 Omarchy's bar moves to the bottom (or stays at the top), grows to taskbar
 height, and is laid out like Windows 11: weather, the world clock and Omarchy's indicators
 (passwordless sudo, screen recording, night light…) on the left, where
-Windows keeps its weather; the Omarchy mark, your desktops and your apps in
+Windows keeps its weather; the Omarchy mark, your workspaces and your apps in
 the middle (classic: all on the left, as on Windows 10); the tray on the right
 with a two-line clock last, whose calendar opens above it. Which widgets go on
 the left is `taskbar.leftWidgets` in settings.json; Omarchy's own workspace
-numbers can come back there with *Show workspaces* in Settings.
+numbers can come back there with *Show Omarchy's workspace row* in Settings.
 
 - App buttons show pinned and running apps, with Windows 11's line under a
   running app and a longer accent line under the focused one. Click to open,
   bring forward, minimize, or step through an app's windows; right-click to
   pin, open another window, or close.
-- **Desktops**, right of the Omarchy mark: the number of the desktop
-  (workspace) you're on. Click it for your desktops along the taskbar, each
-  a small picture of the screen: your background with every window where it
-  is, as it looks, and the app's icon on it. Click a desktop to go there, or
-  a window in one to go straight to that window; **+** for a new desktop,
-  and click a name (or right-click a desktop) to rename it, as on Windows.
-  The wheel steps through them. Names are kept in settings.json and apply to
-  that desktop on every monitor.
+- **Workspaces**, right of the Omarchy mark: Omarchy's workspaces are what
+  Windows calls virtual desktops, and this is its Task View. The button shows
+  the number of the workspace you're on. Click it for your workspaces along
+  the taskbar, each a small picture of the screen: your background with every
+  window where it is, as it looks, and the app's icon on it. Click a
+  workspace to go there, or a window in one to go straight to that window;
+  drag a window onto another workspace (or onto **+**) to move it there;
+  **+** for a new workspace, and click a name (or right-click a workspace) to
+  rename it, as on Windows. The wheel steps through them. Names are kept in
+  settings.json (`desktops.names`) and apply to that workspace on every
+  monitor.
 - Drag an app button sideways to move it; the others make room. Pinned apps
   keep their new order (it is saved with the pins); a running app that isn't
   pinned keeps its place until the shell restarts, as on Windows.
@@ -76,8 +79,8 @@ as on Windows (`snapping.gaps`, *Leave gaps between snapped windows* in
 Settings, keeps Hyprland's gaps instead).
 
 A preview shows where the window will land before you let go. After a snap,
-**snap assist** offers your other windows for the rest of the layout (Tab to
-skip a space, Esc to stop). Dragging a snapped window away gives it back the
+**snap assist** offers the other windows on that workspace (minimized ones
+included) for the rest of the layout (Tab to skip a space, Esc to stop). Dragging a snapped window away gives it back the
 size it had before.
 
 **Smooth motion:** a snapped window glides into its place with a short

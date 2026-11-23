@@ -457,7 +457,10 @@ Item {
             root.showCard = false;
             return;
         }
-        if (!root.monitor || root.monitor.name !== m.name)
+        // Each drag's snapshot makes new monitor objects, whose workspaceId is
+        // the workspace shown now: keep the old one and a snap would carry the
+        // window to whichever workspace the first drag was on.
+        if (root.monitor !== m)
             root.monitor = m;
         var t = ev.mode === "move" ? root.moveTarget(ev, m) : root.resizeTarget(ev, m);
         root.target = t;
@@ -729,19 +732,27 @@ Item {
         return Number(ws.id) > 0 || String(ws.name || "") === "special:minimized";
     }
 
+    // Whether a window belongs to a workspace: it is on it, or was minimized
+    // from it (Omarchy tags a minimized window omarchy-minimized-from-<id>).
+    function onWorkspace(c, wsId) {
+        if (Number(c.workspace && c.workspace.id) === wsId)
+            return true;
+        var tags = c.tags || [];
+        return String(c.workspace && c.workspace.name || "") === "special:minimized"
+            && tags.indexOf("omarchy-minimized-from-" + wsId) !== -1;
+    }
+
+    // Snap assist offers the windows of the workspace being snapped on, as
+    // Windows offers those of the virtual desktop you are on.
     function refreshCandidates() {
         var list = [];
+        var wsId = root.monitor ? root.monitor.workspaceId : -1;
         for (var i = 0; i < root.clients.length; i++) {
             var c = root.clients[i];
-            if (root.isSnappable(c) && root.placedAddresses.indexOf(c.address) === -1)
+            if (root.isSnappable(c) && root.placedAddresses.indexOf(c.address) === -1 && root.onWorkspace(c, wsId))
                 list.push(c);
         }
-        var wsId = root.monitor ? root.monitor.workspaceId : -1;
         list.sort(function(a, b) {
-            var aHere = Number(a.workspace.id) === wsId ? 0 : 1;
-            var bHere = Number(b.workspace.id) === wsId ? 0 : 1;
-            if (aHere !== bHere)
-                return aHere - bHere;
             return Number(a.focusHistoryID) - Number(b.focusHistoryID);
         });
         root.candidates = list;

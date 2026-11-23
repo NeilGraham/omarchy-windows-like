@@ -14,9 +14,9 @@ import "TaskbarModel.js" as Model
 //   start - the Omarchy mark; opens the start menu. Tapping Super (or
 //           Super + Alt + Space for All apps) opens the one on the focused
 //           monitor.
-//   desktops - right of Start: the number of the desktop (workspace) shown,
-//           which opens the desktops to switch to, rename or add one
-//           (Desktops.qml).
+//   desktops - right of Start: the number of the workspace shown, which
+//           opens the workspaces to switch to, rename or add one
+//           (Workspaces.qml).
 //   apps  - pinned and running apps, one button per app, with Windows 11's
 //           running/active lines underneath. Click to launch, bring forward,
 //           minimize, or step through an app's windows; right-click for
@@ -59,6 +59,8 @@ BarWidget {
   }
 
   function entryForAppId(appId) {
+    if (!appId)
+      return null
     var entry = DesktopEntries.heuristicLookup(appId)
     if (entry)
       return entry
@@ -67,7 +69,7 @@ BarWidget {
   }
 
   function iconFor(entry, appId) {
-    var name = entry && entry.icon ? entry.icon : String(appId || "")
+    var name = entry && entry.icon ? entry.icon : String(appId || "") || "application-x-executable"
     if (root.appLibrary)
       return root.appLibrary.iconSource(name)
     return Quickshell.iconPath(name, "application-x-executable")
@@ -90,12 +92,15 @@ BarWidget {
     var toplevels = Hyprland.toplevels.values
     for (var i = 0; i < toplevels.length; i++) {
       var t = toplevels[i].wayland
-      if (!t || !t.appId || t.parent)
+      if (!t || t.parent)
         continue
-      var entry = root.entryForAppId(t.appId)
+      // A window that doesn't name its app (some X11 apps set no class) still
+      // gets a button, as every window does on Windows: its own, with its
+      // title and a generic icon.
+      var entry = t.appId ? root.entryForAppId(t.appId) : null
       var ws = toplevels[i].workspace
       windows.push({
-        key: entry ? entry.id : t.appId,
+        key: entry ? entry.id : (t.appId || "window:" + toplevels[i].address),
         appId: t.appId,
         address: toplevels[i].address,
         workspaceId: ws ? ws.id : -1,
@@ -437,12 +442,12 @@ BarWidget {
     }
   }
 
-  // ---------- Desktops ----------
+  // ---------- Workspaces ----------
 
   Loader {
     active: root.part === "desktops"
     anchors.centerIn: parent
-    sourceComponent: Desktops {
+    sourceComponent: Workspaces {
       host: root
       settings: cfg
       slot: root.slot
