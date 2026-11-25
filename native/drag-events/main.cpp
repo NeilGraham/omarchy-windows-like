@@ -180,7 +180,7 @@ SEdgeHit edgeAt(const Vector2D &pos) {
 
   const auto w = Desktop::viewState()->hitTest().windowAt(
       pos, Desktop::View::ALLOW_FLOATING | Desktop::View::RESERVED_EXTENTS | Desktop::View::INPUT_EXTENTS);
-  if (!w || !validMapped(w) || !w->m_isFloating || (w->m_isX11 && w->isX11OverrideRedirect()) ||
+  if (!windowsLikeEnabled(w) || !validMapped(w) || !w->m_isFloating || (w->m_isX11 && w->isX11OverrideRedirect()) ||
       Fullscreen::controller()->isFullscreen(w) || w->hasPopupAt(pos))
     return {};
 
@@ -251,7 +251,7 @@ bool sameSpace(PHLWINDOW w, PHLWINDOW ref) {
 // facing it across the gap, and those on its side lined up with it.
 std::optional<SJoint> jointAt(PHLWINDOW w, uint8_t edge) {
   using namespace Layout;
-  if (!w || !jointResizeEnabled() || !(edge == CORNER_LEFT || edge == CORNER_RIGHT || edge == CORNER_TOP || edge == CORNER_BOTTOM))
+  if (!windowsLikeEnabled(w) || !jointResizeEnabled() || !(edge == CORNER_LEFT || edge == CORNER_RIGHT || edge == CORNER_TOP || edge == CORNER_BOTTOM))
     return std::nullopt;
   const bool vertical = edge == CORNER_LEFT || edge == CORNER_RIGHT;
   const bool wBefore = edge == CORNER_RIGHT || edge == CORNER_BOTTOM;

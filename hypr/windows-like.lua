@@ -45,14 +45,48 @@ local function setting(path, fallback)
   return value
 end
 
+-- The shared shell presentation follows the focused monitor. The native
+-- plugin receives the policy for all numbered workspaces.
+local command = ...
+local policy = settings.workspacePolicy or {}
+local overrides = policy.overrides or {}
+local function workspace_enabled(id)
+  local override = overrides[tostring(id)]
+  if override ~= nil then return override == "windows-like" end
+  if policy.startMode == "native" then return false end
+  if policy.scope ~= "selected" then return true end
+  for _, selected in ipairs(policy.selected or {}) do
+    if selected == id then return true end
+  end
+  return false
+end
+
+local workspace = (hl.get_active_workspace and hl.get_active_workspace()) or {}
+local active = workspace_enabled(workspace.id)
+if command then
+  local quoted = "'" .. command:gsub("'", "'\\''") .. "'"
+  local function sync_mode()
+    hl.exec_cmd(quoted .. " sync-mode")
+  end
+  hl.on("workspace.active", sync_mode)
+  hl.on("monitor.focused", sync_mode)
+  hl.timer(sync_mode, { type = "oneshot", timeout = 100 })
+  hl.bind("SUPER + SHIFT + F12", function()
+    local focused = hl.get_active_workspace()
+    if focused and focused.id > 0 then
+      hl.exec_cmd(quoted .. " toggle-mode " .. tostring(focused.id))
+    end
+  end, { description = "Toggle Windows-like workspace mode" })
+end
+
 -- Super + Z: the snap layout picker for the focused window, like Win + Z.
-if setting("general.superZ", true) then
+if active and setting("general.superZ", true) then
   o.bind("SUPER + Z", "Snap layouts", hl.dsp.event("windows-like-toggle"))
 end
 
 -- ---------- Start menu ----------
 
-if setting("taskbar.enabled", true) then
+if active and setting("taskbar.enabled", true) then
   -- Tapping Super alone opens Start, like Windows. As a release bind on the
   -- key that is itself the modifier, Hyprland fires it only when nothing else
   -- was pressed in between: Super + anything else shadows it.
@@ -61,7 +95,8 @@ if setting("taskbar.enabled", true) then
   end
   -- Omarchy's app grid lives in its dock, which the taskbar replaces: its key
   -- opens Start's All apps instead.
-  o.rebind("SUPER + ALT + SPACE", "All apps", hl.dsp.event("windows-like-start-apps"))
+  hl.unbind("SUPER + ALT + SPACE")
+  o.bind("SUPER + ALT + SPACE", "All apps", hl.dsp.event("windows-like-start-apps"))
 end
 
 -- ---------- Animations ----------
@@ -72,11 +107,13 @@ end
 -- "decelerate" curve) in place of Omarchy's longer ease. With
 -- animations.enabled off, windows land at once. Omarchy's own switch
 -- (animations off everywhere) turns this off too.
-if setting("animations.enabled", true) then
-  hl.curve("windowsLikeDecelerate", { type = "bezier", points = { { 0.1, 0.9 }, { 0.2, 1 } } })
-  hl.animation({ leaf = "windowsMove", enabled = true, speed = 2.2, bezier = "windowsLikeDecelerate" })
-else
-  hl.animation({ leaf = "windowsMove", enabled = false })
+if active then
+  if setting("animations.enabled", true) then
+    hl.curve("windowsLikeDecelerate", { type = "bezier", points = { { 0.1, 0.9 }, { 0.2, 1 } } })
+    hl.animation({ leaf = "windowsMove", enabled = true, speed = 2.2, bezier = "windowsLikeDecelerate" })
+  else
+    hl.animation({ leaf = "windowsMove", enabled = false })
+  end
 end
 
 -- The snap preview, layout picker and snap assist (WindowsLike.qml) fade
@@ -91,9 +128,50 @@ hl.layer_rule({ match = { namespace = "^windows-like$" }, no_anim = true, animat
 -- and not when dropped on one by the title bar (Hyprland's drag_into_group
 -- would merge a window carried over another into its tabs). A new tab goes
 -- to the end, like on a Mac.
-hl.config({
-  group = { auto_group = false, drag_into_group = 0, insert_after_current = false, groupbar = { enabled = false } },
-})
+if active and setting("tabs.enabled", true) then
+  hl.config({
+    group = { auto_group = false, drag_into_group = 0, insert_after_current = false, groupbar = { enabled = false } },
+  })
+end
+
+-- Positive ids enable the feature, negative ids disable it. The first
+-- token is the fallback for ids with no exception.
+local fallback = policy.startMode ~= "native" and policy.scope ~= "selected"
+local exceptions = {}
+local seen = {}
+local function add_exception(id)
+  if seen[id] then return end
+  seen[id] = true
+  local enabled = workspace_enabled(id)
+  if enabled ~= fallback then
+    table.insert(exceptions, enabled and id or -id)
+  end
+end
+for _, id in ipairs(policy.selected or {}) do add_exception(id) end
+for id in pairs(overrides) do add_exception(tonumber(id)) end
+table.sort(exceptions)
+local native_policy = (fallback and "all" or "none") .. " " .. table.concat(exceptions, " ")
+
+-- Float new windows on enabled numbered workspaces without retiling any
+-- existing windows or modifying Omarchy's saved workspace layouts.
+if setting("general.floatingDefault", true) then
+  local function float_range(first, last)
+    if first <= last then
+      hl.window_rule({ match = { workspace = string.format("r[%d-%d]", first, last) }, float = true })
+    end
+  end
+  if fallback then
+    local first = 1
+    for index = #exceptions, 1, -1 do
+      local id = -exceptions[index]
+      float_range(first, id - 1)
+      first = id + 1
+    end
+    float_range(first, 2147483647)
+  else
+    for _, id in ipairs(exceptions) do float_range(id, id) end
+  end
+end
 
 -- The tabs follow the Omarchy theme. They sit in the title bar (in its
 -- color, laid over its title), and the active tab takes the window's own
@@ -139,6 +217,7 @@ if hl.plugin.windows_like then
         ["col.text_inactive"] = rgb("dark_foreground", "98989d"),
         ["col.separator"] = rgb("selection", "3a3a3c"),
         ["col.button_hover"] = "rgba(" .. foreground .. "26)",
+        workspace_policy = native_policy,
         tabs = setting("tabs.enabled", true) and 1 or 0,
         terminal_names = setting("tabs.terminalNames", true) and 1 or 0,
         side_resize = setting("resizing.sides", true) and 1 or 0,

@@ -41,6 +41,42 @@ Item {
         sourceDir: root.manifest && root.manifest.__sourceDir ? String(root.manifest.__sourceDir) : ""
     }
 
+    property var workspacePolicy: ({})
+    function workspaceEnabled(id) {
+        const policy = root.workspacePolicy;
+        const override = (policy.overrides || {})[String(id)];
+        if (override !== undefined)
+            return override === "windows-like";
+        return policy.startMode !== "native"
+            && (policy.scope !== "selected" || (policy.selected || []).includes(Number(id)));
+    }
+
+    FileView {
+        path: Quickshell.env("HOME") + "/.local/state/omarchy-windows-like/workspace-policy.json"
+        watchChanges: true
+        printErrors: false
+        onLoaded: {
+            const policy = wl.parse(text());
+            if (JSON.stringify(root.workspacePolicy) !== JSON.stringify(policy)) {
+                root.workspacePolicy = policy;
+                root.cancelSnap();
+            }
+        }
+        onLoadFailed: root.workspacePolicy = ({})
+        onFileChanged: reload()
+    }
+
+    function cancelSnap() {
+        root.snapshotReason = "";
+        root.dragActive = false;
+        root.target = null;
+        root.showCard = false;
+        root.stretchAgain = null;
+        root.focusAfter = "";
+        focusTimer.stop();
+        root.close();
+    }
+
     // The overlay's fades: off with animations.enabled, and with Omarchy's
     // own switch (Style.duration is then 0). Windows glide by Hyprland's
     // windowsMove animation (hypr/windows-like.lua).
@@ -453,7 +489,7 @@ Item {
             return;
         }
         var m = root.monitorAt(ev.cx, ev.cy);
-        if (!m) {
+        if (!m || !root.workspaceEnabled(m.workspaceId)) {
             root.target = null;
             root.showCard = false;
             return;
@@ -586,7 +622,8 @@ Item {
         root.hoverZone = -1;
         root.pendingEdge = "";
         dwellTimer.stop();
-        if (!root.dragSnappable)
+        const destination = root.monitorAt(ev.cx, ev.cy);
+        if (!root.dragSnappable || !destination || !root.workspaceEnabled(destination.workspaceId))
             return;
         if (!t || !m) {
             if (mode === "move" && wl.get("snapping.restoreSize", true))
@@ -881,7 +918,8 @@ Item {
 
     function startPicker() {
         var active = root.activeIpc;
-        if (!active || !active.address || Number(active.fullscreen) > 0)
+        if (!active || !active.address || Number(active.fullscreen) > 0
+                || !root.workspaceEnabled(active.workspace && active.workspace.id))
             return;
         var m = root.monitorById(active.monitor);
         if (!m)
@@ -968,7 +1006,7 @@ Item {
                     var c = root.clientByAddress(root.dragAddress);
                     // Only floating windows snap; a tiled drag belongs to the layout.
                     root.dragSnappable = !!c && c.floating === true && Number(c.fullscreen) === 0
-                        && Number(c.workspace && c.workspace.id) > 0;
+                        && Number(c.workspace && c.workspace.id) > 0 && root.workspaceEnabled(c.workspace.id);
                     root.snapshotReady = true;
                     if (root.lastDrag)
                         root.updateTarget(root.lastDrag);
@@ -982,6 +1020,10 @@ Item {
         function onRawEvent(event) {
             if (!event)
                 return;
+            if (event.name === "workspace" || event.name === "workspacev2")
+                root.cancelSnap();
+            else if (event.name === "focusedmon" && !root.dragActive)
+                root.close();
             if (event.name === "configreloaded") {
                 reloadOptions.restart();
                 return;
