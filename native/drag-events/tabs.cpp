@@ -44,6 +44,7 @@
 #include <hyprland/src/config/values/types/ColorValue.hpp>
 #include <hyprland/src/config/values/types/IntValue.hpp>
 #include <hyprland/src/config/values/types/StringValue.hpp>
+#include <hyprland/src/desktop/Workspace.hpp>
 #include <hyprland/src/desktop/state/FadingOutState.hpp>
 #include <hyprland/src/desktop/state/FocusState.hpp>
 #include <hyprland/src/desktop/state/WindowState.hpp>
@@ -100,12 +101,14 @@ HANDLE g_handle = nullptr;
 
 struct {
   SP<Config::Values::CIntValue> height, minWidth, maxWidth, buttonsWidth, fontSize, enabled, terminalNames, sideResize, jointResize;
-  SP<Config::Values::CStringValue> font, tabApps, terminals, tabPrograms, terminalPrograms;
+  SP<Config::Values::CStringValue> font, tabApps, terminals, tabPrograms, terminalPrograms, workspacePolicy;
   SP<Config::Values::CColorValue> bar, titlebar, active, hover, text, textInactive, separator, button;
 } cfg;
 
 void registerConfig() {
   using namespace Config::Values;
+  cfg.workspacePolicy = makeShared<CStringValue>("plugin:windows_like:workspace_policy",
+                                                  "Workspace fallback (all or none) followed by signed workspace exceptions", "all");
   cfg.enabled = makeShared<CIntValue>("plugin:windows_like:tabs", "Tabs on (1) or off (0)", 1);
   cfg.jointResize = makeShared<CIntValue>("plugin:windows_like:joint_resize", "Resize windows that share an edge together (1) or one at a time (0)", 1);
   cfg.sideResize = makeShared<CIntValue>("plugin:windows_like:side_resize", "Resize from the side pressed and show the top-edge cursor (1), or leave it to Hyprland (0)", 1);
@@ -135,7 +138,7 @@ void registerConfig() {
   cfg.separator = makeShared<CColorValue>("plugin:windows_like:col.separator", "Line between inactive tabs", 0xff3a3a3c);
   cfg.button = makeShared<CColorValue>("plugin:windows_like:col.button_hover", "Close and + buttons under the pointer", 0xff48484a);
   for (const SP<Config::Values::IValue> v : std::initializer_list<SP<Config::Values::IValue>>{
-           cfg.enabled, cfg.terminalNames, cfg.sideResize, cfg.jointResize, cfg.height, cfg.minWidth, cfg.maxWidth, cfg.buttonsWidth, cfg.fontSize, cfg.font, cfg.tabApps,
+           cfg.workspacePolicy, cfg.enabled, cfg.terminalNames, cfg.sideResize, cfg.jointResize, cfg.height, cfg.minWidth, cfg.maxWidth, cfg.buttonsWidth, cfg.fontSize, cfg.font, cfg.tabApps,
            cfg.terminals, cfg.tabPrograms, cfg.terminalPrograms, cfg.bar, cfg.titlebar, cfg.active, cfg.hover, cfg.text,
            cfg.textInactive, cfg.separator, cfg.button})
     HyprlandAPI::addConfigValueV2(g_handle, v);
@@ -668,7 +671,7 @@ public:
 
   eMode mode() const {
     const auto w = m_window.lock();
-    if (!cfg.enabled->value() || !w)
+    if (!cfg.enabled->value() || !windowsLikeEnabled(w))
       return eMode::Hidden;
     const bool tabs = w->m_group && w->m_group->size() > 1;
     if (titleBarOf(w) && !Fullscreen::controller()->isFullscreen(w, Fullscreen::FSMODE_FULLSCREEN))
@@ -1579,7 +1582,7 @@ void adoptIfPending(PHLWINDOW w) {
   g_pEventLoopManager->doLater([anchorRef, newRef] {
     const auto anchor = anchorRef.lock();
     const auto nw = newRef.lock();
-    if (!validMapped(anchor) || !validMapped(nw))
+    if (!validMapped(anchor) || !validMapped(nw) || !windowsLikeEnabled(anchor) || !windowsLikeEnabled(nw))
       return;
     if (!anchor->m_group)
       (void)Config::Actions::toggleGroup(anchor);
@@ -1595,7 +1598,7 @@ void adoptIfPending(PHLWINDOW w) {
 
 bool tabAction(const std::string &action, long n) {
   const auto w = Desktop::focusState()->window();
-  if (!cfg.enabled->value() || !w || !hasTabShortcuts(w))
+  if (!cfg.enabled->value() || !windowsLikeEnabled(w) || !hasTabShortcuts(w))
     return false;
   const auto &group = w->m_group;
   if (action == "new")
@@ -1746,6 +1749,33 @@ SP<SHyprCtlCommand> g_ctlCommand;
 
 } // namespace
 
+bool windowsLikeEnabled(PHLWINDOW window) {
+  if (!window || !window->m_workspace)
+    return false;
+  const auto policy = cfg.workspacePolicy->value();
+  static std::string cachedPolicy;
+  static bool fallback = true;
+  static std::unordered_map<WORKSPACEID, bool> exceptions;
+  if (cachedPolicy != policy) {
+    cachedPolicy = policy;
+    exceptions.clear();
+    std::istringstream tokens(policy);
+    std::string first;
+    tokens >> first;
+    fallback = first != "none";
+    WORKSPACEID id;
+    while (tokens >> id) {
+      if (id > 0)
+        exceptions[id] = true;
+      else if (id < 0 && id >= -2147483647)
+        exceptions[-id] = false;
+    }
+  }
+  if (const auto it = exceptions.find(window->m_workspace->m_id); it != exceptions.end())
+    return it->second;
+  return fallback;
+}
+
 // For main.cpp's side resizing.
 bool sideResizeEnabled() { return !cfg.sideResize || cfg.sideResize->value(); }
 bool jointResizeEnabled() { return !cfg.jointResize || cfg.jointResize->value(); }
@@ -1764,7 +1794,7 @@ void init(HANDLE handle) {
   });
   // A tab closing: no fade-out, and no resize as the tab bar goes.
   g_unmapListener = Event::bus()->m_events.window.close.listen([](PHLWINDOW w) {
-    if (w && w->m_group && w->m_group->size() > 1)
+    if (windowsLikeEnabled(w) && w->m_group && w->m_group->size() > 1)
       quietGroupOf(w, true);
   });
   g_closeListener = Event::bus()->m_events.window.destroy.listen([](PHLWINDOWREF w) {

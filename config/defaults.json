@@ -1,4 +1,9 @@
 {
+  "workspaces": {
+    "startMode": "windows-like",
+    "scope": "all",
+    "selected": [1]
+  },
   "taskbar": {
     "enabled": true,
     "style": "windows11",

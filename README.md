@@ -188,6 +188,17 @@ notice changes made through a linked plugin folder.
 
 ### Settings
 
+In **Windows & tabs**, choose **Default Omarchy** or **Windows-like** as the
+starting mode. Apply it to **All workspaces** or enter a list under **Selected
+workspaces**. For Windows-like behavior only on workspace 1, choose
+**Windows-like**, **Selected workspaces**, and enter `1`.
+
+**Super + Shift + F12** toggles the focused numbered workspace. Toggles are
+remembered across logins. Changing the starting mode or workspace selection
+clears previous toggles. The taskbar, Start shortcuts, and global compositor
+appearance follow the focused monitor. Snapping, resizing, and Windows-like
+tabs follow the window's workspace.
+
 ```sh
 omarchy-shell windowslike drag off     # stop snapping by dragging (on/off/status)
 omarchy-shell windowslike assist off   # no snap assist after a snap (on/off/status)

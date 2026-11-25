@@ -9,6 +9,7 @@
 
 // plugin:windows_like:side_resize (registered with the tab settings), read
 // by main.cpp's side resizing.
+bool windowsLikeEnabled(PHLWINDOW window);
 bool sideResizeEnabled();
 // plugin:windows_like:joint_resize: windows sharing an edge resize together.
 bool jointResizeEnabled();

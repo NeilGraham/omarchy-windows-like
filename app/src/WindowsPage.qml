@@ -7,11 +7,64 @@ SettingsPage {
     parentId: "package"
     title: qsTr("Windows & tabs")
 
+    SectionHeader { text: qsTr("Workspace modes") }
+    SettingChoice {
+        path: "workspaces.startMode"
+        title: qsTr("Starting mode")
+        description: qsTr("Press Super + Shift + F12 to toggle the focused workspace. The choice is remembered across logins.")
+        options: [
+            { value: "native", label: qsTr("Default Omarchy") },
+            { value: "windows-like", label: qsTr("Windows-like") }
+        ]
+    }
+    SettingChoice {
+        path: "workspaces.scope"
+        title: qsTr("Apply the starting mode to")
+        description: qsTr("Workspaces outside the selection start in Default Omarchy. Changing the starting mode or selection resets saved toggles.")
+        options: [
+            { value: "all", label: qsTr("All workspaces") },
+            { value: "selected", label: qsTr("Selected workspaces") }
+        ]
+    }
+    SettingsCard {
+        id: workspaceNumbers
+        visible: {
+            backend.settings
+            return backend.value("workspaces.scope") === "selected"
+        }
+        searchable: visible
+        title: qsTr("Workspace numbers")
+        description: qsTr("Enter workspace numbers separated by commas, such as 1, 3, 5.")
+
+        TextField {
+            id: numbers
+            Layout.preferredWidth: 180
+            Accessible.name: workspaceNumbers.title
+            text: {
+                backend.settings
+                return (backend.value("workspaces.selected") || []).join(", ")
+            }
+            validator: RegularExpressionValidator {
+                regularExpression: /\s*(?:[1-9][0-9]*(?:\s*,\s*[1-9][0-9]*)*)?\s*/
+            }
+            onEditingFinished: {
+                if (!acceptableInput)
+                    return
+                const ids = text.trim() === "" ? [] : text.split(",").map(Number)
+                if (ids.some(id => id > 2147483647)) {
+                    text = (backend.value("workspaces.selected") || []).join(", ")
+                    return
+                }
+                backend.setValue("workspaces.selected", [...new Set(ids)].sort((a, b) => a - b))
+            }
+        }
+    }
+
     SectionHeader { text: qsTr("Windows") }
     SettingSwitch {
         path: "general.floatingDefault"
         title: qsTr("Floating windows by default")
-        description: qsTr("New workspaces float like Windows instead of tiling. Super + L still switches one workspace.")
+        description: qsTr("New windows float on Windows-like workspaces. Super + L still changes the focused workspace layout.")
     }
     SettingSwitch {
         path: "resizing.sides"
